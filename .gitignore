@@ -1,0 +1,11 @@
+build/
+*.pdf
+*.aux
+*.log
+*.out
+*.synctex.gz
+jd.txt
+.DS_Store
+
+# personal content — never publish real resume data
+knowledge/

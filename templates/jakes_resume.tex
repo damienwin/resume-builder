@@ -1,0 +1,155 @@
+%-------------------------
+% Resume in LaTeX — Jake's Resume template
+% Author: Jake Gutierrez (https://github.com/jakegut/resume)
+% License: MIT
+%
+% Adapted as a parameterized template for the resume-builder workflow.
+% Claude fills the EXPERIENCE / PROJECTS / SKILLS sections at generation time
+% based on the knowledge base and the target job description.
+%------------------------
+
+\documentclass[letterpaper,11pt]{article}
+
+\usepackage{latexsym}
+\usepackage[empty]{fullpage}
+\usepackage{titlesec}
+\usepackage{marvosym}
+\usepackage[usenames,dvipsnames]{color}
+\usepackage{verbatim}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+\hypersetup{
+  pdftitle={<<NAME>> — Resume},
+  pdfauthor={<<NAME>>},
+  pdfsubject={Resume},
+}
+\usepackage{fancyhdr}
+\usepackage[english]{babel}
+\usepackage{tabularx}
+% glyphtounicode removed for tectonic/xetex compatibility
+
+\pagestyle{fancy}
+\fancyhf{} \fancyfoot{}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\footrulewidth}{0pt}
+
+% Adjust margins
+\addtolength{\oddsidemargin}{-0.5in}
+\addtolength{\evensidemargin}{-0.5in}
+\addtolength{\textwidth}{1in}
+\addtolength{\topmargin}{-.5in}
+\addtolength{\textheight}{1.0in}
+
+\urlstyle{same}
+\raggedbottom
+\raggedright
+\setlength{\tabcolsep}{0in}
+
+% Section formatting
+\titleformat{\section}{
+  \vspace{-4pt}\scshape\raggedright\large
+}{}{0em}{}[\color{black}\titlerule \vspace{-5pt}]
+
+%-------------------------
+% Custom commands
+\newcommand{\resumeItem}[1]{
+  \item\small{
+    {#1 \vspace{-2pt}}
+  }
+}
+
+\newcommand{\resumeSubheading}[4]{
+  \vspace{-2pt}\item
+    \begin{tabular*}{0.97\textwidth}[t]{l@{\extracolsep{\fill}}r}
+      \textbf{#1} & #2 \\
+      \textit{\small#3} & \textit{\small #4} \\
+    \end{tabular*}\vspace{-7pt}
+}
+
+\newcommand{\resumeProjectHeading}[2]{
+    \item
+    \begin{tabular*}{0.97\textwidth}{l@{\extracolsep{\fill}}r}
+      \small#1 & #2 \\
+    \end{tabular*}\vspace{-7pt}
+}
+
+\newcommand{\resumeSubItem}[1]{\resumeItem{#1}\vspace{-4pt}}
+\renewcommand\labelitemii{$\vcenter{\hbox{\tiny$\bullet$}}$}
+
+\newcommand{\resumeSubHeadingListStart}{\begin{itemize}[leftmargin=0.15in, label={}]}
+\newcommand{\resumeSubHeadingListEnd}{\end{itemize}}
+\newcommand{\resumeItemListStart}{\begin{itemize}}
+\newcommand{\resumeItemListEnd}{\end{itemize}\vspace{-5pt}}
+
+%-------------------------------------------
+%%%%%%  RESUME STARTS HERE  %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\begin{document}
+
+%----------HEADING----------
+% Filled from knowledge/profile.md
+\begin{center}
+    \textbf{\Huge \scshape <<NAME>>} \\ \vspace{1pt}
+    \small \href{mailto:<<EMAIL>>}{<<EMAIL>>} $|$
+    \href{https://github.com/<<GITHUB>>}{github.com/<<GITHUB>>} $|$
+    \href{https://linkedin.com/in/<<LINKEDIN>>}{linkedin.com/in/<<LINKEDIN>>}
+\end{center}
+
+%-----------EDUCATION-----------
+% Filled from knowledge/education.md — only the coursework line changes per JD
+\section{Education}
+  \resumeSubHeadingListStart
+    \resumeSubheading
+      {<<SCHOOL>>}{<<SCHOOL_LOCATION>>}
+      {<<DEGREE_LINE — degree, GPA, honors>>}{<<SCHOOL_DATES>>}
+      \resumeItemListStart
+        \resumeItem{\textbf{Relevant Coursework:} <<COURSEWORK_LINE — selected by Claude from education.md based on JD relevance>>}
+      \resumeItemListEnd
+  \resumeSubHeadingListEnd
+
+%-----------EXPERIENCE-----------
+\section{Experience}
+  \resumeSubHeadingListStart
+
+    % Repeat this block per selected experience.
+    % Claude chooses 3–4 experiences from knowledge/experience/ and
+    % knowledge/research/ ranked by JD relevance, and writes 3–4 tailored
+    % bullets per role drawn from the seed bullets + full prose.
+    \resumeSubheading
+      {<<COMPANY>>}{<<LOCATION>>}
+      {<<TITLE>>}{<<DATES>>}
+      \resumeItemListStart
+        \resumeItem{<<BULLET 1 — tailored to JD>>}
+        \resumeItem{<<BULLET 2>>}
+        \resumeItem{<<BULLET 3>>}
+        \resumeItem{<<BULLET 4 — optional, drop if too long>>}
+      \resumeItemListEnd
+
+  \resumeSubHeadingListEnd
+
+%-----------PROJECTS-----------
+\section{Projects}
+    \resumeSubHeadingListStart
+
+      % Typically 1–2 projects. Use \resumeProjectHeading with name, tech stack,
+      % and date. Pick the projects most aligned with the JD.
+      \resumeProjectHeading
+          {\textbf{<<PROJECT NAME>>} $|$ \emph{<<TECH STACK>>}}{<<DATE>>}
+          \resumeItemListStart
+            \resumeItem{<<BULLET 1>>}
+            \resumeItem{<<BULLET 2>>}
+          \resumeItemListEnd
+
+    \resumeSubHeadingListEnd
+
+%-----------TECHNICAL SKILLS-----------
+\section{Technical Skills}
+ \begin{itemize}[leftmargin=0.15in, label={}]
+    \small{\item{
+     \textbf{Languages}{: <<LANGUAGES — filtered by JD relevance>>} \\
+     \textbf{Frameworks \& Tools}{: <<FRAMEWORKS_AND_TOOLS — filtered by JD relevance>>}
+    }}
+ \end{itemize}
+
+%-------------------------------------------
+\end{document}
