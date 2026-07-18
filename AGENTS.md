@@ -43,7 +43,8 @@ Key invariants from that pipeline (do not skip):
 
 ## Setup for a new user
 
-See "Setting it up for yourself" in `README.md`: replace the contents of
-`knowledge/` with your own files (copy the existing ones as format
-examples), delete or rewrite `knowledge/rules.md`, and install
-`tectonic` + `poppler` (for `pdftotext`).
+`knowledge/` is gitignored and won't exist on a fresh clone. See "Setting it
+up for yourself" in `README.md`: copy `knowledge.example/` to `knowledge/`
+(`cp -r knowledge.example knowledge`), fill it in with your own history
+(use the template files as format examples), delete or rewrite
+`knowledge/rules.md`, and install `tectonic` + `poppler` (for `pdftotext`).
