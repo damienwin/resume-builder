@@ -9,3 +9,7 @@ jd.txt
 
 # personal content — never publish real resume data
 knowledge/
+
+# third-party ATS scoring tool + its output — cloned/generated, not vendored
+tools/
+eval/

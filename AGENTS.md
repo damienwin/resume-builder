@@ -31,6 +31,13 @@ Key invariants from that pipeline (do not skip):
 - Keyword coverage is checked against the same extracted text: every
   *required* JD skill the knowledge base truthfully supports must appear
   verbatim; unsupported ones are reported as gaps, never added.
+- Every selected project renders a visible repo/demo link (from its
+  `repo:`/`demo:` frontmatter only — never invented) in place of a date,
+  unless the project's `origin:` is `work` or `research`. AI resume
+  screeners (e.g. HackerRank's open-source ATS) deduct per unlinked
+  project — this is the single biggest fixable score loss. Verify with
+  `pdftotext -layout` that each link's displayed URL text appears
+  unbroken.
 
 ## Repo layout
 
@@ -40,6 +47,17 @@ Key invariants from that pipeline (do not skip):
   `<<PLACEHOLDER>>` from `knowledge/`
 - `build/` — generated output (gitignored)
 - `jd.txt` — scratch file for pasted job descriptions (gitignored)
+- `tools/hiring-agent/` — third-party clone of HackerRank's open-source ATS
+  (interviewstreet/hiring-agent), used only by the optional `ats-score`
+  skill (gitignored, not vendored)
+- `eval/` — `/ats-score` output cache (gitignored)
+
+## Optional: scoring against HackerRank's public ATS rubric
+
+The `ats-score` skill (`.claude/skills/ats-score/SKILL.md`, `/ats-score`)
+runs HackerRank's own open-sourced ATS locally against a built PDF and
+reports a median score + spread. It's diagnostic only — the scorer is
+non-deterministic — never treat it as a gate on `tailor-resume`.
 
 ## Setup for a new user
 

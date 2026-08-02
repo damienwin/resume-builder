@@ -5,7 +5,7 @@ phone:
 github: your-github-handle       # github.com/your-github-handle
 linkedin: your-linkedin-handle   # linkedin.com/in/your-linkedin-handle
 location: City, ST
-website:
+website:   # optional portfolio URL — if filled, AI screeners award a small bonus for a header link
 ---
 
 # Your Name

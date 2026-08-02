@@ -90,10 +90,33 @@ knowledge base's job is to remember everything.
 
 ## Editing the master profile
 
-- `knowledge/profile.md` — name, email, github, linkedin, phone
+- `knowledge/profile.md` — name, email, github, linkedin, phone, optional
+  `website:` (a filled portfolio URL earns a small bonus with AI screeners)
 - `knowledge/education.md` — school, dates, GPA, coursework, honors
 - `knowledge/skills.md` — full skill master list (filtered per JD at gen time)
 - `knowledge/rules.md` — optional per-person selection & output rules
+
+Project files (`knowledge/projects/*.md`) also take:
+- `repo:` — bare `github.com/you/project` form; rendered as a visible link
+  on the resume in place of a date. AI resume screeners (e.g. HackerRank's
+  open-source ATS, see below) deduct per unlinked project, so fill this in
+  for any project without an employer/academic exemption.
+- `demo:` — optional live-demo URL; a small score boost if set.
+- `origin:` — `self` (default, needs a `repo:`), `work`, or `research`
+  (the latter two are exempt from the link requirement — no public repo
+  expected).
+
+## Scoring against HackerRank's open-source ATS (optional)
+
+HackerRank open-sourced the ATS it uses to triage intern applications
+([interviewstreet/hiring-agent](https://github.com/interviewstreet/hiring-agent)).
+Run `/ats-score [pdf-path | --all]` to score a built resume (or the whole
+archived corpus under `~/Desktop/Tailored Resumes/`) against its public
+rubric. First run clones the tool into `tools/hiring-agent/` and sets it up
+to use Claude Haiku (needs `ANTHROPIC_API_KEY` in your shell environment or
+`tools/hiring-agent/.env`). The scorer is known to be non-deterministic —
+treat the output as directional signal (and a checklist of concrete,
+fixable deductions like missing project links), never a target score.
 
 ## Layout
 
@@ -102,7 +125,10 @@ resume-builder/
 ├── AGENTS.md                       # entry point for Codex & other agents
 ├── .claude/
 │   ├── commands/tailor.md          # thin /tailor wrapper (Claude Code)
-│   └── skills/tailor-resume/       # the pipeline (person-agnostic)
+│   ├── commands/ats-score.md       # thin /ats-score wrapper (Claude Code)
+│   ├── skills/tailor-resume/       # the pipeline (person-agnostic)
+│   │   └── SKILL.md
+│   └── skills/ats-score/           # optional HackerRank-ATS scoring harness
 │       └── SKILL.md
 ├── knowledge.example/               # placeholder templates (committed)
 │   ├── profile.md
@@ -121,6 +147,8 @@ resume-builder/
 │   ├── research/                   # one file per research position
 │   └── projects/                   # one file per project
 ├── templates/jakes_resume.tex     # parameterized LaTeX template
-├── build/                          # generated, gitignored
+├── build/                           # generated, gitignored
+├── tools/hiring-agent/              # cloned by /ats-score on first run, gitignored
+├── eval/                            # /ats-score output cache, gitignored
 └── README.md
 ```

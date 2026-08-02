@@ -55,7 +55,14 @@ using the file's `tech` and `domain` frontmatter plus body content.
 Select the subset that fits one page (defaults — `rules.md` overrides):
 - **3–4 experiences** (combined from `experience/` + `research/`), most
   relevant and most recent first.
-- **1–2 projects** most aligned with the JD.
+- **1–2 projects** most aligned with the JD. Prefer projects with a `repo:`
+  in their frontmatter — AI resume screeners deduct per unlinked project.
+  Projects marked `origin: work` or `origin: research` are exempt from this
+  (no public repo expected for employer or academic work); a plain
+  `origin: self` project with no `repo:` should be deprioritized in favor
+  of a linked alternative when one fits the JD comparably well. Never use
+  generic project names ("Calculator", "Todo App", "Weather App") — screeners
+  penalize them; use the full descriptive name from the knowledge file.
 - **Filtered skills** — pick ~10–14 languages and ~10–14 frameworks/tools
   the JD signals are relevant, spelled the way the JD spells them. Do NOT
   dump the entire master list.
@@ -75,6 +82,11 @@ For each selected role, write 3–4 bullets:
 - Include a metric whenever the knowledge file supports one. **Never invent
   metrics that aren't in the knowledge base.**
 - Mirror JD vocabulary where truthful, using the JD's exact spelling.
+- When truthful and the knowledge base supports it, prefer vocabulary AI
+  resume screeners read as complexity signals — real-time, authentication,
+  database(s), microservices, named algorithms/data structures, ML/AI
+  specifics, concrete user/adoption numbers. Never invent a signal that
+  isn't backed by the knowledge file.
 - Keep each bullet to roughly ≤ 165 characters at 11pt (a bit more at 10pt);
   a bullet that wraps past two lines gets cut or split.
 - No first person ("I", "my"), no filler adjectives ("various",
@@ -94,6 +106,14 @@ Read `templates/jakes_resume.tex`. Produce a fully-filled `.tex` file at
   `education.md`; only the coursework line changes per JD.
 - Repeat the `\resumeSubheading` / `\resumeProjectHeading` blocks per
   selected role/project.
+- Each project's `\resumeProjectHeading` right cell renders its links, not a
+  date: `\href{https://<repo>}{<repo>}` from the project's `repo:`
+  frontmatter (bare `github.com/...` display text), plus
+  `$|$ \href{<demo>}{<demo domain>}` when `demo:` is set. Links come only
+  from frontmatter — never construct or guess a URL. For an
+  `origin: work`/`origin: research` project with no `repo:`, fall back to
+  the plain date in that cell. The `$|$` separator is allowed in headings
+  (existing practice in the header line); it is still banned in bullets.
 - Keep the standard section titles exactly as in the template
   (Education / Experience / Projects / Technical Skills) — ATS parsers
   segment resumes by those headings; never rename them.
@@ -149,6 +169,11 @@ recompile only if something fails, then re-verify:
    required skill that is supported but missing, work it into skills or a
    bullet, and recompile. (Skills the knowledge base does NOT support are
    reported as gaps in Step 8 — never added.)
+5. **Link visibility** — for every selected project with a `repo:`/`demo:`,
+   grep the `-layout` output for the exact displayed URL string(s); each
+   must appear verbatim and unbroken (not hyphen-split across a line wrap).
+   If a URL wraps or is missing, shorten the project's tech-stack list (not
+   the URL) and recompile.
 
 Compilation errors → read the error output, fix the `.tex`, recompile.
 
@@ -168,6 +193,16 @@ Tell the user:
 - JD keyword coverage: which required/preferred keywords made it in, and
   anything in the JD that could NOT be backed up from the knowledge base —
   gaps worth adding to `knowledge/` before the next run
+- **Outside-the-resume checklist** (AI-screener signals no PDF edit can
+  fix): each linked repo should be public with a real README, description,
+  and topic tags — screeners fetch the GitHub profile directly; note any
+  selected project whose `repo:`/`demo:` is empty; note that real
+  contributions to others' popular open-source projects move an
+  open-source-style score far more than personal repos (which are capped
+  low); mention `knowledge/profile.md`'s `website:` if it's still empty
+  (a filled portfolio URL earns a small bonus). Point to `/ats-score` for
+  an actual (noisy, diagnostic-only) score against HackerRank's public ATS
+  rubric.
 
 ## Hard rules
 
@@ -180,4 +215,7 @@ Tell the user:
 - ATS safety is a hard requirement: standard section headings, no math-mode
   arrows/times/tilde in bullets, ligature-safe wording, verified extraction
   after every compile.
+- Every selected project shows a visible repo/demo link unless its
+  `origin:` is `work` or `research` — link deductions are the single
+  biggest fixable loss against AI resume screeners.
 - Preferences in `knowledge/rules.md` override the generic defaults here.

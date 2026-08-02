@@ -4,7 +4,9 @@ start: Mon YYYY
 end: Mon YYYY (or "ongoing")
 tech: [list, of, technologies]
 domain: [list, of, problem, domains]
-link: https://github.com/you/project (optional)
+origin: self   # self | research | work — "research"/"work" waive the repo-link requirement
+repo: github.com/you/project   # bare domain form, rendered as a visible link — required for "self" origin
+demo:          # live demo URL if you have one — no deduction without it, but a small score boost with it
 ---
 
 # Project Name
