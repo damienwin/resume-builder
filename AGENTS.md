@@ -59,6 +59,28 @@ runs HackerRank's own open-sourced ATS locally against a built PDF and
 reports a median score + spread. It's diagnostic only — the scorer is
 non-deterministic — never treat it as a gate on `tailor-resume`.
 
+## Optional: scanning Simplify's job boards, and the guided `/start` flow
+
+The `job-scan` skill (`.claude/skills/job-scan/SKILL.md`, `/job-scan`) fetches
+`SimplifyJobs/New-Grad-Positions` or `SimplifyJobs/Summer2027-Internships`
+(raw `README.md`, branch `dev`) and prints a compact, filtered list of
+postings — board, categories (`swe`/`pm`/`dsa`/`quant` by default, `hw`
+opt-in, `startup` always a pass-through, never filtered), and recency window
+(`--days N`, default 7, a plain rolling window) can be passed as flags or,
+for anything unspecified, asked as an interactive checklist (Claude Code
+only — needs `AskUserQuestion`). It never fabricates a posting or a comp
+figure; when `--compare-offer` is used against `knowledge/current_offer.md`,
+the comparison is deliberately **lenient** — it surfaces a posting whenever
+it looks better, equal, or simply unclear, and only stays quiet when a
+posting reads as a clear step down on every available signal. This skill
+only scans and reports; it never tailors or applies on its own.
+
+The `start` skill (`.claude/skills/start/SKILL.md`, `/start`) is the
+recommended entry point for a fresh session: it runs `job-scan`'s full
+checklist, then asks which surfaced postings (if any) to act on, and for
+each selected one runs either `tailor-resume` or the full `apply` flow —
+never on a posting the user didn't explicitly pick.
+
 ## Optional: application-form autofill
 
 Web-form filling is delegated to the third-party `job-apply` Claude Code
@@ -82,3 +104,10 @@ up for yourself" in `README.md`: copy `knowledge.example/` to `knowledge/`
 (`cp -r knowledge.example knowledge`), fill it in with your own history
 (use the template files as format examples), delete or rewrite
 `knowledge/rules.md`, and install `tectonic` + `poppler` (for `pdftotext`).
+`knowledge/current_offer.md` is optional and only needed for
+`/job-scan --compare-offer` / `/start`'s offer-comparison step.
+
+After setup, point the user at **`/start`** (Claude Code) as the default way
+to use this repo day-to-day — it chains job-scan, triage, and
+tailor/apply into one guided flow. Other agents without `AskUserQuestion`
+should drive `tailor-resume`/`apply` directly instead.

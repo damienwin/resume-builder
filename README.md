@@ -1,7 +1,8 @@
 # resume-builder
 
-Generate a tailored one-page LaTeX resume for any job description by combining
-a rich personal knowledge base with a Claude Code skill.
+Find postings, generate a tailored one-page LaTeX resume for any job
+description, and (optionally) autofill the application — all from a rich
+personal knowledge base plus a set of Claude Code skills.
 
 ## Setting it up for yourself
 
@@ -25,8 +26,11 @@ placeholder templates showing the expected format. To make this repo yours:
 4. **Delete or rewrite `knowledge/rules.md`** — it holds per-person
    selection preferences (which roles to always include, where to archive
    finished PDFs). The skill works fine without it.
-5. Open the folder in Claude Code (or Codex — see below) and run
-   `/tailor <jd-url-or-file>`.
+5. Open the folder in Claude Code (or Codex — see below) and run **`/start`**
+   — the guided entry point. It scans Simplify's job boards, walks you
+   through an interactive checklist (board, categories, recency, whether to
+   compare against a current offer), then offers to tailor and/or apply to
+   whatever looks worth pursuing from the results.
 
 The skill itself (`.claude/skills/tailor-resume/SKILL.md`) is fully
 person-agnostic — it fills the template header/education from your
@@ -35,7 +39,30 @@ person-agnostic — it fills the template header/education from your
 **Using Codex (or another agent) instead of Claude Code:** the repo ships an
 `AGENTS.md` that points any agent at the same pipeline. In Codex, just ask
 "tailor my resume to this JD: <url or paste>" from inside the repo — no
-slash command needed.
+slash command needed. (`/start`'s guided job-scan flow is Claude Code
+specific, since it relies on the `AskUserQuestion` tool; other agents can
+still drive `tailor-resume`/`apply` directly.)
+
+## Quickstart: `/start`
+
+```
+/start
+```
+
+This is the recommended way to use the repo day-to-day, once `knowledge/`
+is filled in. It chains three things that are otherwise separate commands:
+
+1. **Scan** — runs `job-scan` (see below), asking an interactive checklist
+   for board (new grad / internship), categories, recency window, and
+   whether to compare postings against a current offer.
+2. **Triage** — shows the compact results and asks which postings, if any,
+   you want to act on.
+3. **Act** — for each one you pick: tailor only, or tailor + apply (always
+   stopping at final review, never auto-submitting).
+
+Prefer more control, or just want to browse without the triage step? Run
+`/job-scan` directly (same checklist, results only, no chaining) — see
+"Scanning Simplify's job boards" below.
 
 ## Usage
 
@@ -118,6 +145,39 @@ to use Claude Haiku (needs `ANTHROPIC_API_KEY` in your shell environment or
 treat the output as directional signal (and a checklist of concrete,
 fixable deductions like missing project links), never a target score.
 
+## Scanning Simplify's job boards (optional)
+
+Run `/job-scan [new-grad|internship] [--dsa] [--pm] [--swe] [--quant] [--hw] [--startup] [--days N] [--compare-offer]`
+to pull recent postings from Simplify Jobs' community-maintained GitHub
+boards (`SimplifyJobs/New-Grad-Positions`, `SimplifyJobs/Summer2027-Internships`)
+and print a compact, filtered list. Anything you don't pass as a flag is
+asked as an interactive checklist instead — bare `/job-scan` works fine.
+
+- Categories are Simplify's own: `swe` (Software Engineering), `pm`
+  (Product Management), `dsa` (Data Science, AI & Machine Learning), `quant`
+  (Quantitative Finance) are the default set; `hw` (Hardware Engineering) is
+  opt-in for a narrower audience and not included unless asked for.
+  `--startup` is offered as a flag but is always a pass-through — Simplify's
+  data has no startup/company-size signal to filter on.
+- Parsing is done by `scripts/parse_simplify_jobs.py`, not by the model
+  eyeballing raw HTML — the boards run to 1,000+ rows across several tables,
+  so a real parser is both faster and more reliable.
+- Recency is a plain rolling window, `--days N`, defaulting to **7**. It's
+  always relative to today, not derived from any application-history file —
+  applications don't always happen in posting order, so a "since my last
+  application" cutoff would be unreliable.
+- `--compare-offer` judges surfaced postings against
+  `knowledge/current_offer.md` (optional, freeform prose — copy
+  `knowledge.example/current_offer.md` to fill in). The judgment is
+  deliberately lenient — it flags a posting whenever it looks better, equal,
+  or just unclear, and only stays quiet when a posting reads as a clear
+  step down on every signal, so a promising option is never silently
+  filtered out. It never fabricates a comp number that isn't in either
+  source.
+
+`/job-scan` only scans and reports — it doesn't tailor or apply. For the
+scan-then-act flow, use **`/start`** instead (see Quickstart above).
+
 ## Applying with the autofiller (optional)
 
 Web-form filling is handled by the third-party
@@ -153,10 +213,16 @@ calling `/job-apply:job-apply` directly skips that guarantee.
 resume-builder/
 ├── AGENTS.md                       # entry point for Codex & other agents
 ├── .claude/
+│   ├── commands/start.md           # thin /start wrapper (Claude Code) — recommended entry point
+│   ├── commands/job-scan.md        # thin /job-scan wrapper (Claude Code)
 │   ├── commands/tailor.md          # thin /tailor wrapper (Claude Code)
 │   ├── commands/ats-score.md       # thin /ats-score wrapper (Claude Code)
 │   ├── commands/app-profile-sync.md # thin /app-profile-sync wrapper (Claude Code)
 │   ├── commands/apply.md           # thin /apply wrapper (Claude Code)
+│   ├── skills/start/               # scan -> triage -> tailor/apply orchestrator (/start)
+│   │   └── SKILL.md
+│   ├── skills/job-scan/            # Simplify job-board scanner (/job-scan)
+│   │   └── SKILL.md
 │   ├── skills/tailor-resume/       # the pipeline (person-agnostic)
 │   │   └── SKILL.md
 │   ├── skills/ats-score/           # optional HackerRank-ATS scoring harness
@@ -170,6 +236,7 @@ resume-builder/
 │   ├── education.md
 │   ├── skills.md
 │   ├── rules.md
+│   ├── current_offer.md            # optional, used by /job-scan --compare-offer
 │   ├── experience/
 │   ├── research/
 │   └── projects/
@@ -178,10 +245,12 @@ resume-builder/
 │   ├── education.md
 │   ├── skills.md
 │   ├── rules.md                    # optional per-person preferences
+│   ├── current_offer.md            # optional, used by /job-scan --compare-offer
 │   ├── experience/                 # one file per role
 │   ├── research/                   # one file per research position
 │   └── projects/                   # one file per project
 ├── templates/jakes_resume.tex     # parameterized LaTeX template
+├── scripts/parse_simplify_jobs.py  # HTML-table parser used by /job-scan
 ├── build/                           # generated, gitignored
 ├── tools/hiring-agent/              # cloned by /ats-score on first run, gitignored
 ├── eval/                            # /ats-score output cache, gitignored
