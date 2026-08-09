@@ -59,6 +59,22 @@ runs HackerRank's own open-sourced ATS locally against a built PDF and
 reports a median score + spread. It's diagnostic only — the scorer is
 non-deterministic — never treat it as a gate on `tailor-resume`.
 
+## Optional: application-form autofill
+
+Web-form filling is delegated to the third-party `job-apply` Claude Code
+plugin (neonwatty/job-apply-plugin) via the Claude in Chrome extension; the
+plugin always stops at final review and never submits. The `app-profile-sync`
+skill (`.claude/skills/app-profile-sync/SKILL.md`, `/app-profile-sync`) merges
+frontmatter facts from `knowledge/` into the plugin's local store — only
+through the plugin's bundled helper script, never by editing `~/.job-apply/`
+files directly. See "Applying with the autofiller" in `README.md`.
+
+Applying end-to-end goes through the `apply` skill
+(`.claude/skills/apply/SKILL.md`, `/apply <job-url>`), which **always runs
+tailor-resume for that specific posting first**, points the plugin's
+`resumePath` at the archived tailored PDF, then fills the form. Never fill
+an application with a resume that wasn't tailored for that posting.
+
 ## Setup for a new user
 
 `knowledge/` is gitignored and won't exist on a fresh clone. See "Setting it

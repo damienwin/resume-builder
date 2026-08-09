@@ -118,6 +118,35 @@ to use Claude Haiku (needs `ANTHROPIC_API_KEY` in your shell environment or
 treat the output as directional signal (and a checklist of concrete,
 fixable deductions like missing project links), never a target score.
 
+## Applying with the autofiller (optional)
+
+Web-form filling is handled by the third-party
+[job-apply plugin](https://github.com/neonwatty/job-apply-plugin) (MIT), which
+drives the [Claude in Chrome](https://chromewebstore.google.com/detail/claude-in-chrome)
+extension — no Playwright or API key needed. It supports LinkedIn Easy Apply,
+Greenhouse, Ashby, Lever, Rippling, and Workday, and **never submits**: it
+always stops at final review and leaves the Submit click to you.
+
+Setup (once):
+
+```bash
+claude plugin marketplace add neonwatty/job-apply-plugin
+claude plugin install job-apply@neonwatty-plugins
+```
+
+plus the Claude in Chrome extension, logged into your job sites.
+
+Run `/app-profile-sync` to push contact/education/experience facts from
+`knowledge/` into the plugin's local store (`~/.job-apply/`, plaintext JSON —
+treat it like your resume).
+
+Then apply with **`/apply <job-url>`** — the recommended entry point. It
+always tailors first (same pipeline as `/tailor`), archives the PDF to
+`~/Desktop/Tailored Resumes/`, points the plugin at that exact file, and
+fills the application, stopping at final review for you to submit. Never
+fill an application with a resume that wasn't tailored for that posting —
+calling `/job-apply:job-apply` directly skips that guarantee.
+
 ## Layout
 
 ```
@@ -126,9 +155,15 @@ resume-builder/
 ├── .claude/
 │   ├── commands/tailor.md          # thin /tailor wrapper (Claude Code)
 │   ├── commands/ats-score.md       # thin /ats-score wrapper (Claude Code)
+│   ├── commands/app-profile-sync.md # thin /app-profile-sync wrapper (Claude Code)
+│   ├── commands/apply.md           # thin /apply wrapper (Claude Code)
 │   ├── skills/tailor-resume/       # the pipeline (person-agnostic)
 │   │   └── SKILL.md
-│   └── skills/ats-score/           # optional HackerRank-ATS scoring harness
+│   ├── skills/ats-score/           # optional HackerRank-ATS scoring harness
+│   │   └── SKILL.md
+│   ├── skills/app-profile-sync/    # syncs knowledge/ into the job-apply plugin store
+│   │   └── SKILL.md
+│   └── skills/apply/               # tailor-then-autofill orchestrator (/apply)
 │       └── SKILL.md
 ├── knowledge.example/               # placeholder templates (committed)
 │   ├── profile.md
