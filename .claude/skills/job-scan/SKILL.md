@@ -11,18 +11,29 @@ Simplify Jobs maintains two community-updated GitHub repos of live postings:
 filters it down, and prints a compact list — never a browser, never invented
 postings.
 
-## Step 0 — Resolve inputs (interactive checklist)
+## Step 0 — Resolve inputs
 
 `$ARGUMENTS` may already specify some choices as flags:
 `new-grad`/`internship`, `--dsa --pm --swe --quant --hw --startup`,
 `--days N`, `--compare-offer`. Anything given via flags is used as-is and
 skipped below.
 
+**Check `knowledge/rules.md` first** for a "Job scan defaults" section. Any
+input covered there (and not overridden by an explicit flag this run) is
+used silently — do not ask about it. Only fall back to the interactive
+checklist below for inputs that are covered by **neither** a flag **nor** a
+`rules.md` default (e.g. `rules.md` doesn't exist yet, or only sets some of
+the four inputs). If the user says something in the current message that
+contradicts a stored default (e.g. "just this once, check internships"),
+follow the message for this run only — don't rewrite `rules.md` from an
+off-hand one-off request.
+
 `AskUserQuestion` caps each question at 4 options, and there are 5 possible
 categories, so this needs **two calls** when categories aren't fully pinned
-by flags:
+by flags or `rules.md`:
 
-**Call 1** — everything except the hardware opt-in, all questions together:
+**Call 1** — everything except the hardware opt-in, all questions together
+(only for the inputs still unresolved after flags + `rules.md`):
 
 1. **Board** — "New Grad" vs "Internship".
 2. **Categories** (multi-select) — options: `swe` (Software Engineering),
@@ -43,10 +54,20 @@ by flags:
    `knowledge/current_offer.md` doesn't exist, this is handled gracefully in
    Step 4, not blocked here.
 
-**Call 2** (skip if `--hw` or an explicit category flag set already covers
-this) — a single yes/no: **"Also include Hardware Engineering roles?"**
-(default no — it's opt-in for a narrower audience, not part of the core
-set). If yes, add `hw` to the active category set from Call 1.
+**Call 2** (skip if `--hw`, an explicit category flag, or `rules.md`
+already covers hardware inclusion) — a single yes/no: **"Also include
+Hardware Engineering roles?"** (default no — it's opt-in for a narrower
+audience, not part of the core set). If yes, add `hw` to the active
+category set from Call 1.
+
+## Step 0.5 — Offer to save new defaults
+
+If any input in Step 0 had to be asked via the checklist (i.e. `rules.md`
+didn't already cover it), after the scan completes (Step 6) ask once
+whether to save the answer(s) as future defaults in `knowledge/rules.md`'s
+"Job scan defaults" section. Only write if they confirm. Skip this offer
+entirely if `rules.md` already had a "Job scan defaults" section covering
+everything asked this run.
 
 ## Step 1 — Resolve the source URL
 
@@ -96,27 +117,38 @@ this from the raw README.
 
 Only if the user opted in (Step 0, Call 1, Q4):
 - `knowledge/current_offer.md` missing → still render the filtered list
-  (Step 5), then tell the user the file doesn't exist and offer to create it
-  from `knowledge.example/current_offer.md`'s template — only if they
-  confirm. No comparison this run.
-- Present → read it. For each surfaced posting, judge qualitatively using
-  only what's in both texts (FAANG+ flag, role-seniority words like
-  "senior"/"staff"/"II" vs "new grad"/"I", company recognizability, any
-  comp/level notes the user wrote). **Be lenient, not a strict gate:** the
-  goal is to never let a potentially-good option slip past unflagged, so
-  print a comparison line whenever the posting is plausibly better, equal,
-  or simply unclear/unknown-but-promising (e.g. an unfamiliar company with
-  no negative signal) — only stay silent on a posting when it's clearly
-  worse on every available signal (comp, level, and company tier all read
-  as a step down). When comp data is genuinely absent for the posting, say
-  "comp unknown — judged on company tier/role level only" and still surface
-  it rather than dropping it for lack of a number.
+  (Step 5, default rendering — there's nothing to rank against), then tell
+  the user the file doesn't exist and offer to create it from
+  `knowledge.example/current_offer.md`'s template — only if they confirm.
+  No comparison this run.
+- Present → read it. For each surfaced posting, classify into one of three
+  tiers using only what's in both texts (FAANG+ flag, role-seniority words
+  like "senior"/"staff"/"II" vs "new grad"/"I", company recognizability, any
+  comp/level notes the user wrote):
+  - **Better** — an explicit, stated signal beats the current offer (higher
+    stated comp, a clearly higher level/seniority, or a company the user's
+    own notes in `current_offer.md` mark as preferred/aspirational).
+  - **Comparable** — no explicit beat, but a real positive signal exists
+    (🔥 FAANG+ flag, or a company/role tier obviously on par with the
+    current offer) — note "comp unknown" if no number is stated.
+  - **Worth a skim** — no clear signal either way: unfamiliar or
+    unverifiable company, no comp data, nothing that reads as a step down.
+    This is the catch-all that keeps the "never silently hide a good
+    option" guarantee without needing a real signal to justify it.
+  - **(Not classified / dropped)** — only when the posting is clearly worse
+    on *every* available signal (comp, level, and company tier all read as
+    a step down). This is the only case where a posting doesn't appear in
+    Step 5's output at all.
+  **Be lenient, not a strict gate:** when signal is genuinely absent or
+  ambiguous, classify as "Worth a skim" rather than dropping it — the cost
+  of one extra line is much lower than hiding a good option. Never invent a
+  comp number or level that isn't stated in either source.
 
 ## Step 5 — Render
 
-Group by category, one line per posting, newest first within a group. Build
-the blurb only from real parsed fields — never an invented company
-description:
+**Default (no `--compare-offer` this run):** group by category, one line
+per posting, newest first within a group. Build the blurb only from real
+parsed fields — never an invented company description:
 
 ```
 ### Software Engineering
@@ -124,6 +156,39 @@ description:
 - ByteDance — SWE New Grad — Seattle, WA — 🔥 FAANG+ · posted 2d ago
 - Homey — Junior SWE (AI-Native) — London, UK — 🛂 no sponsorship · posted 1d ago
 ```
+
+**With `--compare-offer` (and `current_offer.md` present):** replace the
+category grouping with a single compact list ranked **Better → Comparable →
+Worth a skim** (ties broken newest-first). This is deliberately condensed —
+comp data is rarely stated on these boards, so most postings land in
+"Worth a skim," and a full category-by-category dump would bury the few
+postings that actually carry a real signal.
+
+- Render **Better** and **Comparable** postings in full, one line each,
+  with a short rationale:
+  ```
+  ## vs. current offer (Amazon AWS New Grad SWE, Seattle, $185k)
+
+  **Better**
+  (none this scan)
+
+  **Comparable**
+  - ByteDance — Backend Inference Runtime Engineer New Grad — San Jose, CA — 🔥 FAANG+, comp unknown
+  - Salesforce — Software Engineer College Grad — 6 locations — 🔥 FAANG+, comp unknown
+  - Samsara — Software Engineer 1 New Grad — London, UK — 🔥 FAANG+, comp unknown
+  - Roblox — Software Engineer, Early Career — San Mateo, CA — 🔥 FAANG+, comp unknown
+  ```
+- Render **Worth a skim** as one condensed line per category (not one line
+  per posting) — just enough to prove nothing was hidden, without the wall
+  of text:
+  ```
+  **Worth a skim** (no clear signal, not dropped) — SWE: Homey, InterImage,
+  Torch Technologies, IXL Learning ×3, Atoms, KBR, General Dynamics IT ×3,
+  Torc Robotics · DSA: SentiLink ×2, Cortica, Tyson Foods, LiveScore,
+  Varsity Brands · Quant: SentiLink, WallStreetQuants ×3
+  ```
+- If a posting was dropped as clearly worse (rare, given how little comp
+  data exists), say so as a one-line count in Step 6, not in this list.
 
 ## Step 6 — Report
 
@@ -133,16 +198,25 @@ Tell the user:
 - How many closed postings were excluded, if any.
 - If offer-comparison was requested but `knowledge/current_offer.md` is
   missing, remind them here (and whether they asked you to create it).
+- If `--compare-offer` was active and any posting was dropped as clearly
+  worse on every signal (Step 4's last bullet), give a one-line count here
+  (e.g. "3 postings excluded as a clear step down on comp/level/tier") —
+  never silent, but never restated line-by-line either.
 
 ## Hard rules
 
 - Never invent salary, comp, level, or company facts not present in the
   Simplify README or `knowledge/current_offer.md`.
-- Comparison judgment is deliberately lenient: when in doubt, surface the
-  posting rather than silently filtering it out — the cost of a false
-  positive (one extra line to skim) is much lower than hiding a good offer.
-  Still never invent a comp number or level that isn't in either source;
-  say "comp unknown" instead.
+- Comparison judgment is deliberately lenient: when in doubt, classify as
+  "Worth a skim" rather than dropping a posting — the cost of one extra
+  name in a condensed line is much lower than hiding a good offer. Still
+  never invent a comp number or level that isn't in either source; say
+  "comp unknown" instead.
+- With `--compare-offer` active, the ranked/condensed rendering (Step 5) is
+  the default output shape for everyone using this skill, not a one-off —
+  don't fall back to the full category dump just because a run has few
+  "Better"/"Comparable" hits. The condensed "Worth a skim" line exists
+  precisely for that case.
 - Read-only, except optionally creating `knowledge/current_offer.md` from
   the example template — and only with explicit user confirmation.
 - `--startup` / the "startup" category is always a pass-through — never
