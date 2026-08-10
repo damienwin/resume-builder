@@ -46,3 +46,22 @@ Step 1 — if it isn't, stop and fix before continuing.
 
 The plugin never submits; neither does this skill. Summarize the filled
 fields, confirm the uploaded resume filename, and leave Submit to the user.
+
+## Step 5 — Log metrics
+
+Log this run for future reference (see `scripts/log_metric.py`), after
+Step 4's summary — never before, since `status` depends on how filling
+actually went:
+
+```bash
+python3 scripts/log_metric.py job_apply_e2e '{
+  "company": "<company name>",
+  "role": "<role title>",
+  "job_url": "<posting URL>",
+  "resume_path": "<archived PDF path used>",
+  "ats_platform": "<linkedin|greenhouse|ashby|lever|rippling|workday|other>",
+  "status": "<filled_pending_submit|filled_with_gaps|failed>"
+}'
+```
+
+Fire-and-forget — don't mention it to the user (it's a background log).

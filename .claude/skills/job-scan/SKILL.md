@@ -113,6 +113,29 @@ window are already excluded, and `↳` continuation rows are already resolved
 to their parent company. Read the JSON directly; don't re-derive any of
 this from the raw README.
 
+## Step 3.5 — Filter out already-applied companies
+
+The archive folder in `knowledge/rules.md`'s "Output archive" section
+(`/Users/damienwin/Desktop/Tailored Resumes/<SUBFOLDER>/`) holds every
+tailored resume ever produced, named `<TAG> Damien Nguyen.pdf`. A recently
+created file there for a company means a resume was already tailored
+against that company's JD — treat that as already applied and drop it from
+this scan's results, so the same posting doesn't get re-surfaced scan after
+scan.
+
+- Resolve the matching subfolder for the board scanned this run (`New Grad
+  27/` for New Grad, `Summer 26/` for Internship).
+- List files with mtimes: `ls -la "<subfolder>"`.
+- For each parsed entry (Step 3), check whether the company name appears
+  (case-insensitive, substring match) in a filename with an mtime within
+  the last **30 days**. A match means: drop this entry from the surfaced
+  set entirely — before Step 4/5 rendering, not just visually hidden.
+- Files older than 30 days are not a reliable "still relevant" signal (the
+  company may be running a new posting since) — do not match against them.
+- Track a count of how many entries were dropped this way, to report in
+  Step 6. If none dropped, omit the mention entirely (don't pad the report
+  with a zero-count line).
+
 ## Step 4 — Optional current-offer comparison
 
 Only if the user opted in (Step 0, Call 1, Q4):
@@ -121,28 +144,40 @@ Only if the user opted in (Step 0, Call 1, Q4):
   the user the file doesn't exist and offer to create it from
   `knowledge.example/current_offer.md`'s template — only if they confirm.
   No comparison this run.
-- Present → read it. For each surfaced posting, classify into one of three
-  tiers using only what's in both texts (FAANG+ flag, role-seniority words
-  like "senior"/"staff"/"II" vs "new grad"/"I", company recognizability, any
-  comp/level notes the user wrote):
-  - **Better** — an explicit, stated signal beats the current offer (higher
-    stated comp, a clearly higher level/seniority, or a company the user's
-    own notes in `current_offer.md` mark as preferred/aspirational).
+- Present → check `knowledge/rules.md` for a "Comparison bar" override
+  under "Job scan defaults" first. If set (e.g. a flat dollar figure), use
+  **that** as the bar to beat instead of `current_offer.md`'s actual
+  figure, and keep output generic — do not name the current employer in
+  headers or lines when a bar override is active. If no override is set,
+  fall back to comparing directly against `current_offer.md`'s stated
+  company/comp/level.
+- For each surfaced posting, classify into one of three tiers using what's
+  in the posting, `current_offer.md`/the bar, and (per the rules.md note
+  above) an optional levels.fyi lookup when comp isn't stated:
+  - **Better** — a stated or levels.fyi-estimated comp beats the bar, a
+    clearly higher level/seniority, or a company the user's own notes mark
+    as preferred/aspirational.
   - **Comparable** — no explicit beat, but a real positive signal exists
-    (🔥 FAANG+ flag, or a company/role tier obviously on par with the
-    current offer) — note "comp unknown" if no number is stated.
+    (🔥 FAANG+ flag, a levels.fyi estimate roughly at/near the bar, or a
+    company/role tier obviously on par) — note "comp unknown (est. via
+    levels.fyi: $X)" or "comp unknown" as applicable.
   - **Worth a skim** — no clear signal either way: unfamiliar or
-    unverifiable company, no comp data, nothing that reads as a step down.
-    This is the catch-all that keeps the "never silently hide a good
-    option" guarantee without needing a real signal to justify it.
+    unverifiable company, no comp data (stated or estimable), nothing that
+    reads as a step down. This is the catch-all that keeps the "never
+    silently hide a good option" guarantee without needing a real signal to
+    justify it.
   - **(Not classified / dropped)** — only when the posting is clearly worse
-    on *every* available signal (comp, level, and company tier all read as
-    a step down). This is the only case where a posting doesn't appear in
-    Step 5's output at all.
+    on *every* available signal (comp confirmed below the bar via posting
+    or levels.fyi, and level/company tier also read as a step down). This
+    is the only case where a posting doesn't appear in Step 5's output at
+    all.
   **Be lenient, not a strict gate:** when signal is genuinely absent or
   ambiguous, classify as "Worth a skim" rather than dropping it — the cost
   of one extra line is much lower than hiding a good option. Never invent a
-  comp number or level that isn't stated in either source.
+  comp number or level that isn't stated in the posting, in
+  `current_offer.md`, or returned by an actual levels.fyi lookup — always
+  label a levels.fyi figure as an estimate, never as the posting's own
+  stated number.
 
 ## Step 5 — Render
 
@@ -167,7 +202,7 @@ postings that actually carry a real signal.
 - Render **Better** and **Comparable** postings in full, one line each,
   with a short rationale:
   ```
-  ## vs. current offer (Amazon AWS New Grad SWE, Seattle, $185k)
+  ## vs. $100k bar
 
   **Better**
   (none this scan)
@@ -196,12 +231,38 @@ Tell the user:
 - Total postings scanned vs. surfaced after category/date/closed filtering.
 - The day-count window used and its resolved cutoff date.
 - How many closed postings were excluded, if any.
+- How many entries were dropped as already-applied (Step 3.5), if any.
 - If offer-comparison was requested but `knowledge/current_offer.md` is
   missing, remind them here (and whether they asked you to create it).
 - If `--compare-offer` was active and any posting was dropped as clearly
   worse on every signal (Step 4's last bullet), give a one-line count here
   (e.g. "3 postings excluded as a clear step down on comp/level/tier") —
   never silent, but never restated line-by-line either.
+
+## Step 7 — Log metrics
+
+Log this run for future reference (see `scripts/log_metric.py`):
+
+```bash
+python3 scripts/log_metric.py job_scan '{
+  "board": "<new-grad|internship>",
+  "categories": ["swe", "dsa", ...],
+  "days": <N>,
+  "scanned": <Step 3 scanned>,
+  "closed_excluded": <Step 3 closed_excluded>,
+  "already_applied_dropped": <Step 3.5 count>,
+  "surfaced": <final count after 3.5, before compare-offer classification>,
+  "compare_offer_used": <true|false>,
+  "better_count": <N or omit if compare_offer_used is false>,
+  "comparable_count": <N or omit>,
+  "worth_a_skim_count": <N or omit>,
+  "dropped_worse_count": <N or omit>
+}'
+```
+
+Fire-and-forget — don't block or re-render the report on this call, and
+don't mention it in the Step 6 report to the user (it's a background log,
+not part of the scan results).
 
 ## Hard rules
 
