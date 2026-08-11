@@ -181,49 +181,34 @@ Only if the user opted in (Step 0, Call 1, Q4):
 
 ## Step 5 — Render
 
-**Default (no `--compare-offer` this run):** group by category, one line
-per posting, newest first within a group. Build the blurb only from real
-parsed fields — never an invented company description:
+Always a single lean markdown table, all surfaced postings in one table
+(not grouped into per-category sections) — easiest to scan in chat. Columns:
 
-```
-### Software Engineering
-- Arondite — Deployed SWE New Grad — London, UK — posted 1d ago
-- ByteDance — SWE New Grad — Seattle, WA — 🔥 FAANG+ · posted 2d ago
-- Homey — Junior SWE (AI-Native) — London, UK — 🛂 no sponsorship · posted 1d ago
-```
+| Company | Role | TC | Location | Posted | Note |
+|---|---|---|---|---|---|
 
-**With `--compare-offer` (and `current_offer.md` present):** replace the
-category grouping with a single compact list ranked **Better → Comparable →
-Worth a skim** (ties broken newest-first). This is deliberately condensed —
-comp data is rarely stated on these boards, so most postings land in
-"Worth a skim," and a full category-by-category dump would bury the few
-postings that actually carry a real signal.
+- **Company / Role** — verbatim from the parsed entry.
+- **TC** — a total-comp figure only when actually findable: stated in the
+  posting itself, or (only when `--compare-offer` is active, per Step 4) a
+  levels.fyi estimate — label it `~$X (est.)`. Otherwise `—`. Never invent
+  a number, and never spend a levels.fyi lookup on a posting when
+  `--compare-offer` isn't active — that lookup is Step 4's, not Step 5's.
+- **Location** — verbatim.
+- **Posted** — the `age_raw` field (e.g. `1d`, `3d`).
+- **Note** — one short clause, never an invented company blurb:
+  - **With `--compare-offer` active:** the tier rationale from Step 4 —
+    e.g. `beats $100k bar`, `🔥 FAANG+, comp unknown`, `no clear signal`.
+    Sort the table by tier (Better → Comparable → Worth a skim), newest
+    first within each tier.
+  - **Without `--compare-offer`:** a short factual descriptor built only
+    from real parsed fields — flags (`🔥 FAANG+`, `🛂 no sponsorship`),
+    category, or role seniority. Sort newest-first. Leave blank rather
+    than pad with filler when a posting has no flags to note.
+- Postings Step 4 drops as a clear step-down don't get a row — report the
+  count in Step 6 instead, same as before.
 
-- Render **Better** and **Comparable** postings in full, one line each,
-  with a short rationale:
-  ```
-  ## vs. $100k bar
-
-  **Better**
-  (none this scan)
-
-  **Comparable**
-  - ByteDance — Backend Inference Runtime Engineer New Grad — San Jose, CA — 🔥 FAANG+, comp unknown
-  - Salesforce — Software Engineer College Grad — 6 locations — 🔥 FAANG+, comp unknown
-  - Samsara — Software Engineer 1 New Grad — London, UK — 🔥 FAANG+, comp unknown
-  - Roblox — Software Engineer, Early Career — San Mateo, CA — 🔥 FAANG+, comp unknown
-  ```
-- Render **Worth a skim** as one condensed line per category (not one line
-  per posting) — just enough to prove nothing was hidden, without the wall
-  of text:
-  ```
-  **Worth a skim** (no clear signal, not dropped) — SWE: Homey, InterImage,
-  Torch Technologies, IXL Learning ×3, Atoms, KBR, General Dynamics IT ×3,
-  Torc Robotics · DSA: SentiLink ×2, Cortica, Tyson Foods, LiveScore,
-  Varsity Brands · Quant: SentiLink, WallStreetQuants ×3
-  ```
-- If a posting was dropped as clearly worse (rare, given how little comp
-  data exists), say so as a one-line count in Step 6, not in this list.
+Sort ties (same tier, same post date) by company name alphabetically for a
+stable order across re-runs.
 
 ## Step 6 — Report
 
@@ -347,14 +332,11 @@ not part of the scan results).
   Simplify README or `knowledge/current_offer.md`.
 - Comparison judgment is deliberately lenient: when in doubt, classify as
   "Worth a skim" rather than dropping a posting — the cost of one extra
-  name in a condensed line is much lower than hiding a good offer. Still
-  never invent a comp number or level that isn't in either source; say
-  "comp unknown" instead.
-- With `--compare-offer` active, the ranked/condensed rendering (Step 5) is
-  the default output shape for everyone using this skill, not a one-off —
-  don't fall back to the full category dump just because a run has few
-  "Better"/"Comparable" hits. The condensed "Worth a skim" line exists
-  precisely for that case.
+  table row is much lower than hiding a good offer. Still never invent a
+  comp number or level that isn't in either source; use `—` instead.
+- Step 5's single lean table is the default output shape for every run,
+  compare-offer or not — never fall back to category-grouped bullet lists
+  or a wall of prose.
 - Read-only, except optionally creating `knowledge/current_offer.md` from
   the example template — and only with explicit user confirmation.
 - `--startup` / the "startup" category is always a pass-through — never
