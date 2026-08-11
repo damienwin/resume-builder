@@ -184,8 +184,13 @@ Only if the user opted in (Step 0, Call 1, Q4):
 Always a single lean markdown table, all surfaced postings in one table
 (not grouped into per-category sections) — easiest to scan in chat. Columns:
 
-| Company | Role | TC | Location | Posted | Note |
-|---|---|---|---|---|---|
+**With `--compare-offer` active:**
+
+| Company | Role | TC | Location | Posted | Tier | Note |
+|---|---|---|---|---|---|---|
+
+**Without `--compare-offer`:** same table minus the Tier column (there's no
+bar to rank against).
 
 - **Company / Role** — verbatim from the parsed entry.
 - **TC** — a total-comp figure only when actually findable: stated in the
@@ -195,15 +200,24 @@ Always a single lean markdown table, all surfaced postings in one table
   `--compare-offer` isn't active — that lookup is Step 4's, not Step 5's.
 - **Location** — verbatim.
 - **Posted** — the `age_raw` field (e.g. `1d`, `3d`).
-- **Note** — one short clause, never an invented company blurb:
-  - **With `--compare-offer` active:** the tier rationale from Step 4 —
-    e.g. `beats $100k bar`, `🔥 FAANG+, comp unknown`, `no clear signal`.
-    Sort the table by tier (Better → Comparable → Worth a skim), newest
-    first within each tier.
-  - **Without `--compare-offer`:** a short factual descriptor built only
-    from real parsed fields — flags (`🔥 FAANG+`, `🛂 no sponsorship`),
-    category, or role seniority. Sort newest-first. Leave blank rather
-    than pad with filler when a posting has no flags to note.
+- **Tier** (compare-offer runs only) — `Better` / `Comparable` / `Worth a
+  skim`, from Step 4's classification. Sort the table by tier (Better →
+  Comparable → Worth a skim), newest first within each tier.
+- **Note** — always a short, factual clause on **what the company actually
+  does** (industry/product — general public knowledge about the company,
+  e.g. "aerospace/spaceflight," "payments network," "healthcare provider
+  for autism care") — not an invented detail about the specific role or
+  team, and not filler ("great opportunity," "innovative company").
+  - **With `--compare-offer` active:** after the company description,
+    append *why the move could be worth it beyond the comp number* —
+    brand/industry-leader standing, career-trajectory value, name
+    recognition — grounded in a real signal (a `🔥 FAANG+` flag, known
+    industry-leader status, a funded/notable startup) rather than
+    generic enthusiasm. For a `Worth a skim` posting with no such signal,
+    the company description alone is enough — don't manufacture a legacy
+    angle where none exists.
+  - **Without `--compare-offer`:** the company description is the whole
+    Note — no rationale needed since there's nothing to compare against.
 - Postings Step 4 drops as a clear step-down don't get a row — report the
   count in Step 6 instead, same as before.
 
