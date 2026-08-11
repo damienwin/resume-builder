@@ -261,6 +261,20 @@ surfaced zero postings.
    - **Tailor only** — `tailor-resume` skill flow per posting, no
      autofill.
    - **Skip everything** — do nothing further.
+   Before dispatching any forks, resolve two things once (not per-fork, so
+   parallel forks don't each independently prompt the user for the same
+   answer):
+   - **Archive destination.** If `knowledge/rules.md` has no "Output
+     archive" section (e.g. a fresh clone still on the `knowledge.example/`
+     template), ask the user once now for the destination folder — don't
+     let each fork ask independently.
+   - **job-apply plugin availability** (only if any posting's action is
+     "tailor + apply"). Locate the store helper as in
+     `app-profile-sync/SKILL.md` Step 0
+     (`ls -d ~/.claude/plugins/cache/neonwatty-plugins/job-apply/*/scripts/job-apply-store.py`).
+     If missing, tell the user to install it and downgrade those postings'
+     action to "tailor only" for this run rather than dispatching forks
+     that will fail.
 3. **Dispatch one subagent fork per selected posting, launched together in
    a single batch so they run in parallel** — never process postings one at
    a time in the main conversation. This is the efficiency win: tailoring +
@@ -283,14 +297,14 @@ surfaced zero postings.
      mismatches. If found, stop immediately, do not tailor or open a
      browser tab, and report the specific conflicting line back so the user
      can decide whether to override it.
-   - If the action is "tailor + apply": update the job-apply plugin's
-     `resumePath` via the store helper (never edit `~/.job-apply/` files
-     directly), then open its **own new browser tab** via
-     `tabs_create_mcp` (never touch a tab another fork or the main
-     conversation is using) and run the `job-apply` skill's fill flow,
-     stopping at final review — never submit. Leave ambiguous/subjective
-     screening questions (self-reported years of experience, "select up to
-     N" checklists with no true match) for the user rather than guessing,
+   - If the action is "tailor + apply": run the full `apply` skill
+     (`.claude/skills/apply/SKILL.md`) for that posting's URL, exactly as
+     `/apply <url>` would — it already covers pointing the store at the
+     archived PDF and filling the application. Open its own new browser
+     tab via `tabs_create_mcp` (never touch a tab another fork or the main
+     conversation is using). Leave ambiguous/subjective screening
+     questions (self-reported years of experience, "select up to N"
+     checklists with no true match) for the user rather than guessing,
      unless the knowledge base makes the answer unambiguous.
    - Log via `scripts/log_metric.py job_apply_e2e` when applicable.
    - Report back: archived resume path, what got filled vs. left for the
