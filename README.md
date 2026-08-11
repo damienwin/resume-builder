@@ -50,19 +50,30 @@ still drive `tailor-resume`/`apply` directly.)
 ```
 
 This is the recommended way to use the repo day-to-day, once `knowledge/`
-is filled in. It chains three things that are otherwise separate commands:
+is filled in. It's a thin wrapper around `/job-scan` (see below) that also
+checks `knowledge/` is set up first — the scan → triage → act flow now
+lives in `job-scan` itself, so `/job-scan` and `/start` behave the same way
+once setup is done:
 
-1. **Scan** — runs `job-scan` (see below), asking an interactive checklist
-   for board (new grad / internship), categories, recency window, and
-   whether to compare postings against a current offer.
-2. **Triage** — shows the compact results and asks which postings, if any,
-   you want to act on.
-3. **Act** — for each one you pick: tailor only, or tailor + apply (always
-   stopping at final review, never auto-submitting).
+1. **Scan** — asks an interactive checklist for board (new grad /
+   internship), categories, recency window, and whether to compare
+   postings against a current offer.
+2. **Triage** — shows the compact results, confirms the list looks right,
+   then asks which postings (if any) to act on and whether to tailor only
+   or tailor + apply.
+3. **Act, in parallel** — every selected posting is handed to its own
+   subagent, all launched together rather than one at a time, so tailoring
+   N postings costs about the same wall-clock time as tailoring one. Each
+   subagent first checks the JD for hard eligibility blockers (work
+   authorization/visa/clearance requirements, graduation-year or
+   start-date cohort mismatches) against your `knowledge/` profile and
+   skips with a reported reason rather than wasting effort on a posting
+   you can't actually take; otherwise it tailors, archives the PDF, and
+   (for tailor + apply) fills the application in its own browser tab,
+   always stopping at final review — never auto-submitting.
 
-Prefer more control, or just want to browse without the triage step? Run
-`/job-scan` directly (same checklist, results only, no chaining) — see
-"Scanning Simplify's job boards" below.
+Just want to browse without triggering the act step? Say so when asked, or
+answer "just browsing" at the first triage prompt.
 
 ## Usage
 
@@ -175,8 +186,11 @@ asked as an interactive checklist instead — bare `/job-scan` works fine.
   filtered out. It never fabricates a comp number that isn't in either
   source.
 
-`/job-scan` only scans and reports — it doesn't tailor or apply. For the
-scan-then-act flow, use **`/start`** instead (see Quickstart above).
+After reporting results, `/job-scan` also offers to act on them — the same
+triage-then-parallel-subagents flow described in the Quickstart above (list
+confirmation, pick postings + tailor/apply, fan out to one subagent per
+posting). Answer "just browsing" at that prompt if you only want the scan
+output this run.
 
 ## Applying with the autofiller (optional)
 
@@ -219,9 +233,9 @@ resume-builder/
 │   ├── commands/ats-score.md       # thin /ats-score wrapper (Claude Code)
 │   ├── commands/app-profile-sync.md # thin /app-profile-sync wrapper (Claude Code)
 │   ├── commands/apply.md           # thin /apply wrapper (Claude Code)
-│   ├── skills/start/               # scan -> triage -> tailor/apply orchestrator (/start)
+│   ├── skills/start/               # setup check + thin wrapper around job-scan (/start)
 │   │   └── SKILL.md
-│   ├── skills/job-scan/            # Simplify job-board scanner (/job-scan)
+│   ├── skills/job-scan/            # scan -> triage -> parallel tailor/apply (/job-scan)
 │   │   └── SKILL.md
 │   ├── skills/tailor-resume/       # the pipeline (person-agnostic)
 │   │   └── SKILL.md

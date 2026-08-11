@@ -239,6 +239,69 @@ Tell the user:
   (e.g. "3 postings excluded as a clear step down on comp/level/tier") —
   never silent, but never restated line-by-line either.
 
+## Step 6.5 — Offer to act on results
+
+This is now the default flow for every `/job-scan` run, not just `/start`'s
+— skip it only if the user's `$ARGUMENTS` explicitly asked for scan-only
+output (e.g. a `--no-act` style request in plain language) or if Step 5
+surfaced zero postings.
+
+1. **Confirm the list is good.** Ask the user (`AskUserQuestion`,
+   single-select: "Looks good, let's act" / "Adjust the filters" / "Just
+   browsing, no action") before doing anything else. If they want
+   adjustments, go back to Step 0 with their new input rather than guessing
+   — do not silently re-run with assumed changes. If "just browsing," stop
+   here; the Step 6 report already covers this run.
+2. **Pick postings and an action.** Once the list is confirmed, ask
+   (`AskUserQuestion`, multi-select) which surfaced postings to act on,
+   listed by company — role. For the ones selected, ask once more
+   (single-select, applies to all selected postings this round) which
+   action to take:
+   - **Tailor + apply** — full `apply` skill flow per posting.
+   - **Tailor only** — `tailor-resume` skill flow per posting, no
+     autofill.
+   - **Skip everything** — do nothing further.
+3. **Dispatch one subagent fork per selected posting, launched together in
+   a single batch so they run in parallel** — never process postings one at
+   a time in the main conversation. This is the efficiency win: tailoring +
+   filling is I/O- and compile-bound (network fetch, tectonic, browser
+   automation), so N postings in parallel forks costs about the same wall
+   time as one. Each fork's prompt must be self-contained (forks share your
+   context, but still need explicit direction) and must:
+   - Run the full `tailor-resume` skill for that posting (fetch the JD —
+     for JS-rendered ATS pages that WebFetch can't extract, try Workday's
+     `wday/cxs/<tenant>/<site>/job/...` JSON API or a `.md`/markdown
+     alternate link some ATS platforms expose in the page `<head>`, before
+     falling back to asking the user for pasted JD text), archive the
+     verified PDF per `knowledge/rules.md`'s "Output archive" section, and
+     log via `scripts/log_metric.py resume_tailor`.
+   - **Before spending any tailoring effort**, check the JD for hard
+     eligibility blockers stated as requirements (not preferences) that
+     conflict with `knowledge/profile.md` / `knowledge/education.md` —
+     right-to-work/visa/clearance requirements the profile doesn't meet,
+     graduation-year or start-date cohorts that don't match, degree-level
+     mismatches. If found, stop immediately, do not tailor or open a
+     browser tab, and report the specific conflicting line back so the user
+     can decide whether to override it.
+   - If the action is "tailor + apply": update the job-apply plugin's
+     `resumePath` via the store helper (never edit `~/.job-apply/` files
+     directly), then open its **own new browser tab** via
+     `tabs_create_mcp` (never touch a tab another fork or the main
+     conversation is using) and run the `job-apply` skill's fill flow,
+     stopping at final review — never submit. Leave ambiguous/subjective
+     screening questions (self-reported years of experience, "select up to
+     N" checklists with no true match) for the user rather than guessing,
+     unless the knowledge base makes the answer unambiguous.
+   - Log via `scripts/log_metric.py job_apply_e2e` when applicable.
+   - Report back: archived resume path, what got filled vs. left for the
+     user, and (if a browser tab was opened) enough to identify it for the
+     user's final review.
+4. **Summarize once all forks complete.** Report per-posting outcomes
+   (tailored/applied/skipped-for-eligibility/left-for-review) — don't wait
+   silently; each fork's completion surfaces as its own notification, so
+   compile a running summary as they land rather than blocking on all of
+   them before saying anything if the user asks for status mid-flight.
+
 ## Step 7 — Log metrics
 
 Log this run for future reference (see `scripts/log_metric.py`):
@@ -282,6 +345,13 @@ not part of the scan results).
   the example template — and only with explicit user confirmation.
 - `--startup` / the "startup" category is always a pass-through — never
   build a company-name denylist or other heuristic for it.
-- This skill only scans and reports. It does not tailor a resume or fill an
-  application — for that, hand the user to `/start` (if they came from
-  there) or point them at `/apply <job-url>` / `/tailor <job-url>` directly.
+- Scanning always reports first; acting (Step 6.5) always requires explicit
+  user selection of which postings and which action — never tailor or
+  apply to a posting the user didn't pick.
+- When acting on multiple postings, always fan out to parallel subagent
+  forks (one per posting, launched in a single batch) rather than
+  processing them sequentially in the main conversation.
+- Every fork checks for hard eligibility blockers (work authorization,
+  degree/graduation-year cohort mismatches, clearance requirements) before
+  tailoring or opening a browser tab, and skips with a reported reason
+  rather than guessing or proceeding past a stated disqualifier.
