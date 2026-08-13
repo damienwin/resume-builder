@@ -8,7 +8,7 @@ Usage:
 
 Output: JSON to stdout — {"entries": [...], "scanned": N, "closed_excluded": N}
 Each entry: company, role, location, age_raw, category, faang, adv_degree,
-no_sponsor, us_citizen, apply_url. Only closed (locked) rows and rows older
+no_sponsor, us_citizen, apply_url, source. Only closed (locked) rows and rows older
 than --days are excluded; everything else in the requested categories is
 included — filtering decisions beyond that (offer comparison, relevance)
 are left to the caller.
@@ -104,6 +104,7 @@ def parse(readme_text: str, wanted_categories: set[str], max_days: float):
                 "no_sponsor": no_sponsor,
                 "us_citizen": us_citizen,
                 "apply_url": apply_url,
+                "source": "simplify",
             })
 
     return {"entries": entries, "scanned": scanned, "closed_excluded": closed_excluded}

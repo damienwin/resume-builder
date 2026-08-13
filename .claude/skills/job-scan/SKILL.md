@@ -1,15 +1,18 @@
 ---
 name: job-scan
-description: Scan Simplify Jobs' New-Grad-Positions or Summer-Internships GitHub board for postings from the last N days (default 7), filtered interactively by category, with an optional comparison against the user's current offer. Use when the user wants to browse or check for new job/internship postings, e.g. "/job-scan", "any new SWE new grad roles?", "check simplify for internships".
+description: Scan Simplify Jobs' New-Grad-Positions or Summer-Internships GitHub board (New Grad runs also merge speedyapply/2027-SWE-College-Jobs) for postings from the last N days (default 7), filtered interactively by category, with an optional comparison against the user's current offer. Use when the user wants to browse or check for new job/internship postings, e.g. "/job-scan", "any new SWE new grad roles?", "check simplify for internships".
 ---
 
-# job-scan — Scan Simplify's job boards, filtered to what matters
+# job-scan — Scan job boards, filtered to what matters
 
 Simplify Jobs maintains two community-updated GitHub repos of live postings:
 `SimplifyJobs/New-Grad-Positions` and `SimplifyJobs/Summer2027-Internships`
-(branch `dev`, file `README.md` in both). This skill fetches the live table,
-filters it down, and prints a compact list — never a browser, never invented
-postings.
+(branch `dev`, file `README.md` in both). On the New Grad board, results are
+merged with a second community-updated repo,
+`speedyapply/2027-SWE-College-Jobs` (file `NEW_GRAD_USA.md`), which tracks
+many postings Simplify's board doesn't. This skill fetches the live
+table(s), filters them down, and prints a single compact list — never a
+browser, never invented postings.
 
 ## Step 0 — Resolve inputs
 
@@ -69,49 +72,97 @@ whether to save the answer(s) as future defaults in `knowledge/rules.md`'s
 entirely if `rules.md` already had a "Job scan defaults" section covering
 everything asked this run.
 
-## Step 1 — Resolve the source URL
+## Step 1 — Resolve the source URL(s)
 
 - New Grad → `https://raw.githubusercontent.com/SimplifyJobs/New-Grad-Positions/dev/README.md`
+  **plus** a second source,
+  `https://raw.githubusercontent.com/speedyapply/2027-SWE-College-Jobs/main/NEW_GRAD_USA.md`
+  — merged into every New Grad run by default (no flag/prompt gates this).
 - Internship → `https://raw.githubusercontent.com/SimplifyJobs/Summer2027-Internships/dev/README.md`
+  only — speedyapply's board isn't wired in for internships (different
+  file/format, not yet reviewed).
 
 ## Step 2 — Fetch
 
 ```bash
-curl -sf <url> -o <scratchpad>/simplify_readme.md
+curl -sf <simplify_url> -o <scratchpad>/simplify_readme.md
+curl -sf <speedyapply_url> -o <scratchpad>/speedyapply_readme.md   # New Grad only
 ```
 
 Use `curl -sf` (the `-f` makes curl exit nonzero on an HTTP error instead of
 saving an error page) via Bash, not `WebFetch` — WebFetch summarizes through
-a small model and loses exact table structure, which the parser in Step 3
-depends on. Save to a scratchpad temp file, never into the repo.
+a small model and loses exact table structure, which the parsers in Step 3
+depend on. Save to scratchpad temp files, never into the repo.
 
-**If the fetch fails** (nonzero exit, empty file, or a file that doesn't
-contain `<table` — e.g. GitHub rate-limited the request or is down): stop
-and tell the user the scan couldn't run and why. Do NOT proceed and report
-"0 postings found" — that reads as "no new postings" when the real story is
-"couldn't check."
+**If the Simplify fetch fails** (nonzero exit, empty file, or a file that
+doesn't contain `<table` — e.g. GitHub rate-limited the request or is down):
+stop and tell the user the scan couldn't run and why. Do NOT proceed and
+report "0 postings found" — that reads as "no new postings" when the real
+story is "couldn't check." Simplify is the primary source.
+
+**If the speedyapply fetch fails** (New Grad board only — nonzero exit,
+empty file, or a file missing any `TABLE_` marker): this is *not* fatal —
+it's a supplementary source. Continue the scan with Simplify results only,
+and note the degraded fetch in Step 6's report rather than failing silently
+or stopping the whole scan.
 
 ## Step 3 — Parse and filter
 
-Run the repo's parser script rather than hand-parsing the HTML — the README
-is thousands of lines across several large tables, and eyeballing that many
-rows for company/role/flags/age is slow and error-prone (a manual first
-pass missed same-day postings a script caught cleanly):
+Run the repo's parser scripts rather than hand-parsing the raw text — these
+files are thousands of lines across several large tables, and eyeballing
+that many rows for company/role/flags/age is slow and error-prone (a manual
+first pass missed same-day postings a script caught cleanly):
 
 ```bash
 python3 scripts/parse_simplify_jobs.py <scratchpad>/simplify_readme.md \
   --categories <comma-separated active category flags, e.g. swe,dsa,quant or swe,pm,dsa,quant,hw> \
   --days <N from Step 0, default 7>
+
+# New Grad board only, and only if the speedyapply fetch succeeded:
+python3 scripts/parse_speedyapply_jobs.py <scratchpad>/speedyapply_readme.md \
+  --categories <same category flags as above> \
+  --days <same N as above>
 ```
 
-Output is JSON: `{"entries": [...], "scanned": N, "closed_excluded": N}`.
-Each entry already has `category`, `company`, `role`, `location`, `age_raw`,
-`apply_url`, and booleans `faang`/`adv_degree`/`no_sponsor`/`us_citizen` —
-closed postings (Simplify replaces the whole apply-links cell with a bare
-🔒 rather than marking company/role text) and anything older than the day
-window are already excluded, and `↳` continuation rows are already resolved
-to their parent company. Read the JSON directly; don't re-derive any of
-this from the raw README.
+Both scripts output the same JSON shape:
+`{"entries": [...], "scanned": N, "closed_excluded": N}`. Each entry has
+`category`, `company`, `role`, `location`, `age_raw`, `apply_url`, `source`
+(`"simplify"` or `"speedyapply"`), and booleans
+`faang`/`adv_degree`/`no_sponsor`/`us_citizen` — closed postings (Simplify
+only: it replaces the whole apply-links cell with a bare 🔒 rather than
+marking company/role text) and anything older than the day window are
+already excluded, and Simplify's `↳` continuation rows are already resolved
+to their parent company. speedyapply has no closed-posting marker
+(`closed_excluded` is always 0 for it) and no adv_degree/no_sponsor/
+us_citizen signal (always `false`) — that's a known gap in that source, not
+a bug. Read the JSON directly; don't re-derive any of this from the raw
+files.
+
+When the speedyapply parser ran, concatenate its `entries` list with
+Simplify's into one merged list (carry both `scanned` counts forward
+separately for Step 6/7 — don't just sum them into one opaque number).
+
+## Step 3.25 — Dedupe across sources (New Grad board only)
+
+Only runs when the speedyapply parser also ran (Step 3). The same live
+posting can legitimately appear on both boards, so before any
+already-applied filtering, collapse cross-source duplicates out of the
+merged entries list:
+
+- Two entries are the same posting if either holds:
+  - **Same `apply_url`** (compare with tracking query params stripped —
+    some ATS links append `?gh_jid=`/`?utm_...` variants of the same
+    canonical URL), or
+  - **Same company** (case-insensitive) **and** a clearly matching `role`
+    string — reuse the same "near-identical title / shared distinctive
+    keywords" comparison described in Step 3.5 below rather than a new
+    heuristic.
+- When a duplicate pair is found, **keep the Simplify-sourced entry** (it
+  carries the richer `faang`/`adv_degree`/`no_sponsor`/`us_citizen` flags)
+  and drop the speedyapply one.
+- Track a count of duplicates dropped this way, to report in Step 6. If
+  none dropped, omit the mention entirely (same zero-count convention as
+  Step 3.5).
 
 ## Step 3.5 — Filter out already-applied companies
 
@@ -121,17 +172,37 @@ tailored resume ever produced, named `<TAG> Damien Nguyen.pdf`. A recently
 created file there for a company means a resume was already tailored
 against that company's JD — treat that as already applied and drop it from
 this scan's results, so the same posting doesn't get re-surfaced scan after
-scan.
+scan. Applies identically regardless of `source` — runs over the merged,
+cross-source-deduped list from Step 3.25 (or the plain Simplify list on
+boards where speedyapply doesn't run).
 
 - Resolve the matching subfolder for the board scanned this run (`New Grad
   27/` for New Grad, `Summer 26/` for Internship).
 - List files with mtimes: `ls -la "<subfolder>"`.
 - For each parsed entry (Step 3), check whether the company name appears
   (case-insensitive, substring match) in a filename with an mtime within
-  the last **30 days**. A match means: drop this entry from the surfaced
-  set entirely — before Step 4/5 rendering, not just visually hidden.
+  the last **30 days**. A company match alone is *not* enough to drop —
+  companies routinely post multiple distinct new-grad roles, and an
+  archived resume only means one specific JD was already tailored.
+  - **Tight window, no role check needed:** if the matching archive file's
+    mtime is within the last **3 days**, treat it as the same posting and
+    drop automatically — a same-company file that fresh is almost always
+    this exact scan re-surfacing.
+  - **Company matches but archive file is older than 3 days (up to the
+    30-day cutoff):** also compare the parsed entry's `role` string against
+    the archived filename/tag. Drop only if the role text is a clear match
+    (near-identical title, or the filename's `<TAG>` — often a shortened
+    role/company label — shares its distinctive keywords with the posting
+    role, e.g. "Identity and Network Access" vs. a same-named tag). If the
+    role reads as meaningfully different (different team, function, or
+    title — e.g. "Officepy" vs. "Identity and Network Access"), do **not**
+    auto-drop it: keep it in the surfaced set and append a short note to
+    its Step 5 row, e.g. "(resume already archived for <Company> on
+    <date>, different role)" — surface it rather than silently hide it,
+    same principle as never silently hiding a good option.
 - Files older than 30 days are not a reliable "still relevant" signal (the
-  company may be running a new posting since) — do not match against them.
+  company may be running a new posting since) — do not match against them
+  at all, not even for the role-text check.
 - Track a count of how many entries were dropped this way, to report in
   Step 6. If none dropped, omit the mention entirely (don't pad the report
   with a zero-count line).
@@ -228,8 +299,13 @@ stable order across re-runs.
 
 Tell the user:
 - Total postings scanned vs. surfaced after category/date/closed filtering.
+  On the New Grad board, break the scanned count down by source (Simplify
+  vs. speedyapply) rather than one merged number.
 - The day-count window used and its resolved cutoff date.
 - How many closed postings were excluded, if any.
+- If the speedyapply fetch failed (Step 2), say so here — the scan still
+  ran, just Simplify-only for this run.
+- How many cross-source duplicates were dropped (Step 3.25), if any.
 - How many entries were dropped as already-applied (Step 3.5), if any.
 - If offer-comparison was requested but `knowledge/current_offer.md` is
   missing, remind them here (and whether they asked you to create it).
@@ -289,13 +365,36 @@ surfaced zero postings.
      verified PDF per `knowledge/rules.md`'s "Output archive" section, and
      log via `scripts/log_metric.py resume_tailor`.
    - **Before spending any tailoring effort**, check the JD for hard
-     eligibility blockers stated as requirements (not preferences) that
-     conflict with `knowledge/profile.md` / `knowledge/education.md` —
-     right-to-work/visa/clearance requirements the profile doesn't meet,
-     graduation-year or start-date cohorts that don't match, degree-level
-     mismatches. If found, stop immediately, do not tailor or open a
-     browser tab, and report the specific conflicting line back so the user
-     can decide whether to override it.
+     eligibility blockers that conflict with `knowledge/profile.md` /
+     `knowledge/education.md` — graduation-year or start-date cohorts that
+     don't match, degree-level/field mismatches (e.g. Master's/PhD
+     required), or right-to-work/visa/clearance requirements. These are
+     categorical: either the candidate meets them or the posting is off the
+     table entirely, no judgment call needed. **A stated years-of-experience
+     minimum (e.g. "1-3 years required," "2+ years post-Bachelor's") is
+     explicitly NOT a stop condition** — companies routinely list an
+     experience bar that a strong new-grad candidate applies past anyway,
+     and the candidate has said to always attempt these rather than
+     self-select out. Note it in the report/fork summary as a stretch, but
+     tailor and apply regardless. Cohort and degree-level checks are
+     answered directly from `knowledge/`.
+     Right-to-work/visa/citizenship/clearance eligibility is **not** stored
+     in `knowledge/` (it's personal and would otherwise land in a
+     git-tracked file — a real risk since this repo may be forked/shared,
+     per `knowledge/rules.md`'s fork note) — instead check the job-apply
+     plugin's local store first: `python3 "$STORE" answer-find --question
+     "<the JD's exact eligibility phrasing, e.g. 'Are you a U.S.
+     citizen?'>"` (see `app-profile-sync/SKILL.md` Step 0 for locating
+     `$STORE`). If a confirmed answer exists there, use it — never re-ask.
+     If none exists, ask the user directly (this is per-user, per-machine
+     state — every clone of this repo, including other people's forks,
+     starts with nothing stored and gets asked independently) and, only
+     with their explicit consent, remember it via `answer-put --input
+     <file> --remember-sensitive` (state `"confirmed"`, sensitivity
+     `"high"`) so future runs don't ask again. If the JD requirement is
+     genuinely unmet (or the user declines to answer), stop immediately, do
+     not tailor or open a browser tab, and report the specific conflicting
+     line back so the user can decide whether to override it.
    - If the action is "tailor + apply": run the full `apply` skill
      (`.claude/skills/apply/SKILL.md`) for that posting's URL, exactly as
      `/apply <url>` would — it already covers pointing the store at the
@@ -324,8 +423,11 @@ python3 scripts/log_metric.py job_scan '{
   "board": "<new-grad|internship>",
   "categories": ["swe", "dsa", ...],
   "days": <N>,
-  "scanned": <Step 3 scanned>,
+  "scanned": <Step 3 scanned, summed across sources>,
+  "scanned_simplify": <Step 3 Simplify scanned>,
+  "scanned_speedyapply": <Step 3 speedyapply scanned, or omit if not New Grad / fetch failed>,
   "closed_excluded": <Step 3 closed_excluded>,
+  "cross_source_dropped": <Step 3.25 count, or omit if 0 / not applicable>,
   "already_applied_dropped": <Step 3.5 count>,
   "surfaced": <final count after 3.5, before compare-offer classification>,
   "compare_offer_used": <true|false>,
@@ -343,7 +445,7 @@ not part of the scan results).
 ## Hard rules
 
 - Never invent salary, comp, level, or company facts not present in the
-  Simplify README or `knowledge/current_offer.md`.
+  Simplify README, the speedyapply file, or `knowledge/current_offer.md`.
 - Comparison judgment is deliberately lenient: when in doubt, classify as
   "Worth a skim" rather than dropping a posting — the cost of one extra
   table row is much lower than hiding a good offer. Still never invent a
@@ -365,3 +467,7 @@ not part of the scan results).
   degree/graduation-year cohort mismatches, clearance requirements) before
   tailoring or opening a browser tab, and skips with a reported reason
   rather than guessing or proceeding past a stated disqualifier.
+  Citizenship/visa/clearance answers are per-user, machine-local state in
+  the job-apply plugin's store (never written to `knowledge/` or any other
+  git-tracked file) — check there first, ask and offer to remember (with
+  consent) if nothing's stored yet.
