@@ -222,6 +222,15 @@ Only if the user opted in (Step 0, Call 1, Q4):
   headers or lines when a bar override is active. If no override is set,
   fall back to comparing directly against `current_offer.md`'s stated
   company/comp/level.
+- Before falling back to a levels.fyi estimate or "comp unknown": if the
+  parsed entry itself has no comp (neither Simplify nor speedyapply table
+  cells reliably carry salary data), fetch the posting's `apply_url` and
+  scan the JD text for a stated salary/range. A directly stated JD figure
+  is authoritative — prefer it over a levels.fyi estimate either way, and
+  never relabel it as an "estimate." Skip this fetch for postings that are
+  clearly going to be dropped on every other signal anyway (no point
+  fetching a JD just to confirm a drop); it's meant to catch cases where a
+  stated JD comp would have changed the tier.
 - For each surfaced posting, classify into one of three tiers using what's
   in the posting, `current_offer.md`/the bar, and (per the rules.md note
   above) an optional levels.fyi lookup when comp isn't stated:
