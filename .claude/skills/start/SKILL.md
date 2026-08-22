@@ -24,22 +24,22 @@ useful with the results.
 Run the **job-scan** skill (`.claude/skills/job-scan/SKILL.md`) exactly as
 `/job-scan` would, with no preset flags — let its Step 0 interactive
 checklist run in full (board, categories, recency, compare-offer), and let
-it run all the way through, including its own Step 6.5 "Offer to act on
-results" (confirm the list, pick postings + tailor/apply, fan out to
-parallel subagent forks). Do not skip or shortcut any of its steps —
-job-scan's triage-and-act flow is now its own default behavior, so `/start`
-doesn't need to add a separate triage layer on top of it.
+it run all the way through, including its Step 6 "Offer to act", which
+follows `job-scan/references/acting-on-results.md` (confirm the list, pick
+postings + tailor/apply, fan out to parallel subagent forks). Do not skip or
+shortcut any of its steps — job-scan's triage-and-act flow is its own
+default behavior, so `/start` doesn't add a separate triage layer on top.
 
 ## Step 3 — Report
 
-job-scan's own Step 6.5/7 summary already covers everything acted on. Just
-remind the user this was `/start`'s guided entry point and they can rerun
-`/job-scan` directly next time for the same flow without the setup check in
-Step 1.
+job-scan's own report and act-flow summary already cover everything acted
+on. Just remind the user this was `/start`'s guided entry point and they can
+rerun `/job-scan` directly next time for the same flow without the setup
+check in Step 1.
 
 ## Hard rules
 
-- Never skip job-scan's own interactive checklist or its Step 6.5 act flow.
+- Never skip job-scan's own interactive checklist or its act flow.
 - Inherits every hard rule from `job-scan`, `tailor-resume`, and `apply` —
   in particular: never invent facts, and applications always stop at final
   review, never auto-submit.
