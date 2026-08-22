@@ -159,38 +159,62 @@ fixable deductions like missing project links), never a target score.
 ## Scanning Simplify's job boards (optional)
 
 Run `/job-scan [new-grad|internship] [--dsa] [--pm] [--swe] [--quant] [--hw] [--startup] [--days N] [--compare-offer]`
-to pull recent postings from Simplify Jobs' community-maintained GitHub
-boards (`SimplifyJobs/New-Grad-Positions`, `SimplifyJobs/Summer2027-Internships`)
-and print a compact, filtered list. Anything you don't pass as a flag is
-asked as an interactive checklist instead — bare `/job-scan` works fine.
+to pull recent postings and print a single lean markdown table. Anything you
+don't pass as a flag is asked as an interactive checklist instead — bare
+`/job-scan` works fine.
 
+- Sources: Simplify Jobs' community-maintained GitHub boards
+  (`SimplifyJobs/New-Grad-Positions`, `SimplifyJobs/Summer2027-Internships`).
+  New Grad runs also merge `speedyapply/2027-SWE-College-Jobs`, a second
+  live source with many postings Simplify's board doesn't carry; the two are
+  cross-source deduped (same company/role collapsed to one row) before
+  filtering. speedyapply isn't wired in for internship runs. If the
+  speedyapply fetch fails, the scan still runs on Simplify alone and says so.
 - Categories are Simplify's own: `swe` (Software Engineering), `pm`
   (Product Management), `dsa` (Data Science, AI & Machine Learning), `quant`
   (Quantitative Finance) are the default set; `hw` (Hardware Engineering) is
   opt-in for a narrower audience and not included unless asked for.
   `--startup` is offered as a flag but is always a pass-through — Simplify's
   data has no startup/company-size signal to filter on.
-- Parsing is done by `scripts/parse_simplify_jobs.py`, not by the model
-  eyeballing raw HTML — the boards run to 1,000+ rows across several tables,
-  so a real parser is both faster and more reliable.
+- Parsing is done by `scripts/parse_simplify_jobs.py` and
+  `scripts/parse_speedyapply_jobs.py`, not by the model eyeballing raw
+  HTML/Markdown — the boards run to 1,000+ rows across several tables, so a
+  real parser is both faster and more reliable.
+- Cross-source deduping and already-applied filtering run in
+  `scripts/merge_and_filter_jobs.py` (unit-tested in
+  `scripts/test_merge_and_filter_jobs.py`) rather than being re-derived by
+  the model each scan — same thresholds every run, and reproducible.
+  "Already applied" is judged primarily from `knowledge/metrics.jsonl`,
+  which records the company *and role* of every tailored resume; archived
+  PDF filenames are a fallback for runs predating that log. A company match
+  alone never drops a posting outside a 3-day window — companies run several
+  new-grad postings at once, so an unconfirmed match is surfaced with a note
+  instead of being hidden.
 - Recency is a plain rolling window, `--days N`, defaulting to **7**. It's
   always relative to today, not derived from any application-history file —
   applications don't always happen in posting order, so a "since my last
   application" cutoff would be unreliable.
+- Output is always a single table — `Company | Role | TC | Location | Posted
+  | Tier | Note` under `--compare-offer` (Tier column dropped otherwise) —
+  never grouped prose lists.
 - `--compare-offer` judges surfaced postings against
   `knowledge/current_offer.md` (optional, freeform prose — copy
-  `knowledge.example/current_offer.md` to fill in). The judgment is
-  deliberately lenient — it flags a posting whenever it looks better, equal,
-  or just unclear, and only stays quiet when a posting reads as a clear
-  step down on every signal, so a promising option is never silently
-  filtered out. It never fabricates a comp number that isn't in either
-  source.
+  `knowledge.example/current_offer.md` to fill in), classifying each row
+  into Better / Comparable / Worth a skim. The judgment is deliberately
+  lenient — it flags a posting whenever it looks better, equal, or just
+  unclear, and only stays quiet when a posting reads as a clear step down on
+  every signal, so a promising option is never silently filtered out. It
+  never fabricates a comp number that isn't in either source.
 
 After reporting results, `/job-scan` also offers to act on them — the same
 triage-then-parallel-subagents flow described in the Quickstart above (list
 confirmation, pick postings + tailor/apply, fan out to one subagent per
 posting). Answer "just browsing" at that prompt if you only want the scan
-output this run.
+output this run. Each fork's eligibility check only blocks on
+citizenship/visa/clearance, degree level, or graduation-year/cohort
+mismatches against `knowledge/profile.md` / `knowledge/education.md` — a
+stated years-of-experience minimum never blocks a fork on its own; a strong
+new-grad candidate applies past it regardless.
 
 ## Applying with the autofiller (optional)
 
@@ -264,7 +288,12 @@ resume-builder/
 │   ├── research/                   # one file per research position
 │   └── projects/                   # one file per project
 ├── templates/jakes_resume.tex     # parameterized LaTeX template
-├── scripts/parse_simplify_jobs.py  # HTML-table parser used by /job-scan
+├── scripts/
+│   ├── parse_simplify_jobs.py      # HTML-table parser used by /job-scan
+│   ├── parse_speedyapply_jobs.py   # second-source parser (New Grad runs)
+│   ├── merge_and_filter_jobs.py    # cross-source dedupe + already-applied filter
+│   ├── test_merge_and_filter_jobs.py
+│   └── log_metric.py               # appends run records to knowledge/metrics.jsonl
 ├── build/                           # generated, gitignored
 ├── tools/hiring-agent/              # cloned by /ats-score on first run, gitignored
 ├── eval/                            # /ats-score output cache, gitignored
