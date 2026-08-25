@@ -108,7 +108,10 @@ Read `templates/jakes_resume.tex` and fill every `<<PLACEHOLDER>>` into
 `build/resume.tex`:
 
 - Header (name, email, github, linkedin) from `profile.md` — the
-  `\hypersetup` PDF metadata block also takes the name.
+  `\hypersetup` PDF metadata block also takes the name. If `website:` is
+  filled, append it to the header as a fourth `$|$`-separated link
+  (`\href{https://<<WEBSITE>>}{<<WEBSITE>>}`, no `https://` in the display
+  text).
 - Education from `education.md`; only the coursework line changes per JD.
 - Repeat `\resumeSubheading` / `\resumeProjectHeading` per selected item.
 - **Each project's `\resumeProjectHeading` right cell renders links, not a
@@ -212,9 +215,7 @@ verified PDF there. If the destination is ambiguous, ask once.
   selected project with an empty `repo:`/`demo:`. Note that real
   contributions to others' popular open-source projects move an
   open-source score far more than personal repos, which are capped low.
-  Mention `profile.md`'s `website:` if still empty (a filled portfolio URL
-  earns a small bonus). Point to `/ats-score` for an actual — noisy,
-  diagnostic-only — score.
+  Point to `/ats-score` for an actual — noisy, diagnostic-only — score.
 
 ## Step 9 — Log metrics
 
