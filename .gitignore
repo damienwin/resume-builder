@@ -7,6 +7,9 @@ build/
 jd.txt
 .DS_Store
 
+# marker: /start has already shown its one-time star nudge in this clone
+.star-prompted
+
 # personal content — never publish real resume data
 knowledge/
 
