@@ -55,6 +55,13 @@ Read frontmatter (and only what's needed from bodies) of:
 - `knowledge/projects/*.md` — name, repo, demo, tech (useful for portfolio
   questions).
 - `knowledge/skills.md` — the categorized master list, flattened.
+- `knowledge/demographics.md` — **optional and often absent**; skip silently
+  if missing, and never create it unprompted. Read only its filled fields:
+  voluntary EEO answers, pronouns, relocation, work authorization, and the
+  consent toggles. A blank field means "ask at fill time" — do not store a
+  placeholder for it. A field set to `decline` is a real answer meaning
+  "choose the form's decline-to-answer option," so store it as such. Never
+  infer any of these from a name, school, or any other field.
 - `knowledge/rules.md` — apply its confidentiality rules to everything above.
 
 ## Step 2 — Read the current store profile
@@ -89,6 +96,14 @@ portfolio URLs, graduation date, degree/school), check for an existing record
 first with `answer-find`, then store missing ones via `answer-put --input`
 with state `"inferred"` — the plugin will still show them for confirmation
 before first use. Never mark anything `confirmed` yourself.
+
+Demographic and self-identification answers from `knowledge/demographics.md`
+are sensitive: the user already opted in by writing them down, but that is
+consent to *use* them, not consent for the plugin to remember them. Ask the
+plugin's two questions for these exactly as for any sensitive fact below,
+and store with `--remember-sensitive` only on explicit consent. Store them
+verbatim — never normalize a `decline` into a blank, or a blank into a
+guess.
 
 For sensitive facts (work authorization, visa, salary): ask the user the
 plugin's two separate questions — (1) use in forms? (2) remember for later?

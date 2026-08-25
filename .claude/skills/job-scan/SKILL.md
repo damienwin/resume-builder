@@ -98,6 +98,46 @@ resume but the role couldn't be confirmed as the same posting. Keep it in the
 table and append that note to its Note column. Surfacing beats silently
 hiding a possibly-different opening.
 
+## Step 2.5 — Verify advanced-degree (🎓) postings
+
+Every entry with `adv_degree: true` must have its JD checked **before it
+reaches the table**. The board's role title routinely hides the requirement —
+a row listed as "Software Engineer Early Career, Multiple Teams" turned out to
+be "Software Engineer, Infrastructure, PhD, Early Career," with a PhD as a
+minimum qualification.
+
+**Resolve the user's own degree level first**, from `knowledge/education.md`
+(the degree in progress, and its expected completion date). Everything below
+is a comparison against *that* — never a blanket rule. A PhD posting is a
+hard mismatch for a BS candidate and a perfectly good match for a PhD
+candidate, so a repo used by a grad student must keep exactly the rows a
+bachelor's candidate drops. If `education.md` is missing or its degree level
+is ambiguous, keep every hatted posting and note the flag as unverified
+rather than assuming bachelor's.
+
+Then fetch the `apply_url` and read the minimum-qualifications section:
+
+- **Required degree is above the user's** (it appears under minimum/required
+  qualifications, or the title/cohort names the degree) → drop the posting as
+  a hard eligibility mismatch and count it for Step 5. Do not surface it.
+- **Required degree is at or below the user's** → keep it. If the posting is
+  aimed at a cohort the user is in, that's a positive signal worth a Note.
+- **Advanced degree only preferred**, or a lower degree is also accepted →
+  keep the posting and say so in its Note column (e.g. "PhD preferred, BS
+  accepted").
+- **JD unreachable** (JS-rendered page, 403, empty body) → keep the posting,
+  and mark the Note "advanced-degree flag unverified." Never let a failed
+  fetch silently disqualify a role.
+
+Degree level is the only thing this step tests. A graduation-year or
+start-date cohort mismatch is checked later, per posting, in
+`references/acting-on-results.md`.
+
+Never surface a hatted posting unchecked and leave the disqualification for
+the user to catch. Google Careers and many ATS pages are JS-rendered and
+return only nav chrome through `WebFetch`; `curl -sL` with a browser
+User-Agent, then stripping tags, usually recovers the qualifications text.
+
 ## Step 3 — Optional current-offer comparison
 
 Only if the user opted in.
@@ -163,7 +203,19 @@ against). Everything else is identical.
   recognition — but only grounded in a real signal (`🔥 FAANG+`, known
   industry leader, notable funding). For a Worth-a-skim posting with no such
   signal the company description alone is enough; don't manufacture an angle.
-  Append any `applied_note` here too.
+  Append any `applied_note` here too, plus any known **application cap**
+  (below) and any Step 2.5 degree note.
+
+**Application caps.** Some employers limit how many roles one candidate may
+have open at once (TikTok, for example, allows 2). A cap makes each
+submission scarce, so note it as `cap: N applications` when it is known, and
+say so before a submission is spent on a weak-fit role. Take the number only
+from an explicit statement in the JD, the application portal, or a candidate
+account page — or from well-established public knowledge of that employer's
+policy. **Never guess a number.** If a cap plainly exists but the count
+isn't verifiable, write "application cap, count unverified." Write nothing
+when there's no signal either way: an absent note means unknown, not
+uncapped.
 
 ## Step 5 — Report
 

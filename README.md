@@ -133,6 +133,12 @@ knowledge base's job is to remember everything.
 - `knowledge/education.md` — school, dates, GPA, coursework, honors
 - `knowledge/skills.md` — full skill master list (filtered per JD at gen time)
 - `knowledge/rules.md` — optional per-person selection & output rules
+- `knowledge/demographics.md` — optional voluntary EEO / self-identification
+  answers, pronouns, relocation and consent toggles. Purely to stop the
+  autofiller asking the same questions on every application. Every field is
+  optional: blank means "ask me," and `decline` is a real answer meaning
+  "pick the form's decline-to-answer option." Nothing here is ever inferred
+  from your name, school, or anything else.
 
 Project files (`knowledge/projects/*.md`) also take:
 - `repo:` — bare `github.com/you/project` form; rendered as a visible link
@@ -205,6 +211,17 @@ don't pass as a flag is asked as an interactive checklist instead — bare
   unclear, and only stays quiet when a posting reads as a clear step down on
   every signal, so a promising option is never silently filtered out. It
   never fabricates a comp number that isn't in either source.
+- Postings carrying the advanced-degree flag (🎓) get their JD checked before
+  they reach the table, because board titles hide the requirement — a row
+  listed as "Software Engineer Early Career" turned out to require a PhD as a
+  minimum qualification. A posting is dropped only when it requires a degree
+  above the one in `knowledge/education.md`, so a Master's or PhD candidate
+  keeps the rows a bachelor's candidate drops. An unreachable JD keeps the
+  posting and marks it unverified rather than dropping it.
+- Known **application caps** (some employers limit how many roles you may
+  have open at once) are noted per posting, so a scarce slot isn't spent on a
+  weak-fit role. The count is only ever taken from the JD, the portal, or
+  well-established public policy — never guessed.
 
 After reporting results, `/job-scan` also offers to act on them — the same
 triage-then-parallel-subagents flow described in the Quickstart above (list
@@ -275,6 +292,7 @@ resume-builder/
 │   ├── skills.md
 │   ├── rules.md
 │   ├── current_offer.md            # optional, used by /job-scan --compare-offer
+│   ├── demographics.md             # optional voluntary EEO / autofill answers
 │   ├── experience/
 │   ├── research/
 │   └── projects/
@@ -284,6 +302,7 @@ resume-builder/
 │   ├── skills.md
 │   ├── rules.md                    # optional per-person preferences
 │   ├── current_offer.md            # optional, used by /job-scan --compare-offer
+│   ├── demographics.md             # optional voluntary EEO / autofill answers
 │   ├── experience/                 # one file per role
 │   ├── research/                   # one file per research position
 │   └── projects/                   # one file per project
