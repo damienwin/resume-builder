@@ -155,12 +155,23 @@ Only if the user opted in.
   tables carry a Salary column (roughly a fifth of its rows have one, e.g.
   `$202k/yr`), and the parser passes it straight through. Never fetch a JD or
   estimate for a posting whose figure is already in the JSON.
-- **Only then**, if `salary` is absent, fetch the posting's `apply_url` and
-  scan the JD for a stated salary/range — Simplify's table never carries comp,
-  and speedyapply's "Other" rows don't either. A figure stated in the JD or
-  the table is authoritative: prefer it over any estimate and never relabel it
-  as one. Skip this fetch for postings already headed for a drop on every
-  other signal.
+- **For every remaining posting** (no `salary` field, and not already headed
+  for a drop on every other signal), fetch the JD and scan for a stated
+  salary/range — Simplify's table never carries comp, and speedyapply's
+  "Other" rows don't either. This step is mandatory, not something to skip
+  for speed: a stated JD figure is the single biggest driver of tier
+  placement, and defaulting straight to "Worth a skim" without checking
+  misclassifies postings that actually beat the bar. **Fetch these JDs in
+  parallel**, not one at a time — loop `curl -sL` (with a browser
+  User-Agent) over all the URLs into a scratchpad directory as a single
+  backgrounded batch (or `xargs -P`), then parse every saved file in one
+  pass. Sequential fetches burn latency for no benefit; a stated figure in
+  the JD or table is authoritative and takes precedence over any estimate —
+  never relabel it as one.
+- **Only after** the JD check comes up empty for a posting, fall back to a
+  levels.fyi lookup (`https://www.levels.fyi/companies/<company>/salaries/software-engineer`
+  or search) for that company + role, and label the figure `~$X (est.)`.
+  levels.fyi is the last resort, never the first move.
 
 Classify each posting:
 
