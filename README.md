@@ -190,6 +190,12 @@ don't pass as a flag is asked as an interactive checklist instead — bare
   `scripts/merge_and_filter_jobs.py` (unit-tested in
   `scripts/test_merge_and_filter_jobs.py`) rather than being re-derived by
   the model each scan — same thresholds every run, and reproducible.
+- Every network fetch (board files, JD pages for degree/salary checks) goes
+  through `scripts/fetch_urls.py` (unit-tested in
+  `scripts/test_fetch_urls.py`), a small concurrent fetcher rather than
+  hand-rolled `curl` prose per call site — one JD is never fetched twice in
+  the same scan, one bad URL never sinks the batch, and failure handling is
+  identical everywhere it's used.
   "Already applied" is judged primarily from `knowledge/metrics.jsonl`,
   which records the company *and role* of every tailored resume; archived
   PDF filenames are a fallback for runs predating that log. A company match
@@ -312,6 +318,8 @@ resume-builder/
 │   ├── parse_speedyapply_jobs.py   # second-source parser (New Grad runs)
 │   ├── merge_and_filter_jobs.py    # cross-source dedupe + already-applied filter
 │   ├── test_merge_and_filter_jobs.py
+│   ├── fetch_urls.py               # concurrent URL fetcher used by /job-scan and /ats-score
+│   ├── test_fetch_urls.py
 │   └── log_metric.py               # appends run records to knowledge/metrics.jsonl
 ├── build/                           # generated, gitignored
 ├── tools/hiring-agent/              # cloned by /ats-score on first run, gitignored

@@ -82,8 +82,27 @@ When asked to score the archived corpus (or given `--all` / a folder path):
 find "$HOME/Desktop/Tailored Resumes" -name "*.pdf"
 ```
 
-For each PDF, run Step 1 (3 runs) and Step 2's aggregation. Write results to
-`eval/scores.json` in the repo root (gitignored) as
+Each `score.py` run is an independent Anthropic API call — N PDFs × 3 runs
+scored one at a time is N×3 sequential round-trips for no reason. Build the
+full `(pdf, run-index)` work list up front and drive it through a **bounded
+pool of 4 concurrent runs** (`xargs -P 4`, or the user's `--runs`/`--parallel`
+override), not more — a wider pool risks provider rate limits producing 429s
+that look like scoring failures rather than genuine low scores. A small
+wrapper script (in the scratchpad, not the repo) that activates the venv and
+runs one `(pdf, run-index)` pair, appending its parsed result to a per-run
+file, keeps output from interleaving:
+
+```bash
+# one line per (pdf, run-index) pair in a worklist file, then:
+xargs -P 4 -I{} <scratchpad>/score_one.sh {} < <scratchpad>/worklist.txt
+```
+
+**Retry a run once** on failure before reporting it, and **distinguish an
+API/rate-limit failure from a genuine low score** in the aggregation — never
+fold a 429 or timeout into the median as if it were a real run.
+
+Once every PDF's runs are in, run Step 2's aggregation per PDF. Write results
+to `eval/scores.json` in the repo root (gitignored) as
 `{"<pdf-path>": {"median": N, "min": N, "max": N, "categories": {...}, "scored_at": "<ISO date>"}}`,
 merging into any existing file rather than overwriting other entries. Report
 a **corpus average** (mean of medians) and flag any deduction pattern that

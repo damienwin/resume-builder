@@ -48,15 +48,22 @@ confirmation. Skip the offer if `rules.md` already covered everything.
 speedyapply is merged into every New Grad run by default (no flag gates it);
 it isn't wired in for internships (different format, not yet reviewed).
 
+Fetch every board file for this run **in one parallel batch** — the boards
+are independent, so fetching them one at a time burns latency for no benefit.
+Write one line per file to a urls-file (tab-separated `<url>\t<name>`, e.g.
+`simplify.md`, `speedyapply.md`) and pass it to `scripts/fetch_urls.py`:
+
 ```bash
-curl -sf "https://raw.githubusercontent.com/<repo>/<branch>/<file>" -o <scratchpad>/<name>.md
+python3 scripts/fetch_urls.py --urls-file <scratchpad>/board_urls.txt \
+  --out-dir <scratchpad> --concurrency 4 > <scratchpad>/board_fetch.json
 ```
 
-Use `curl -sf` via Bash, never `WebFetch` — WebFetch summarizes through a
-small model and destroys the table structure the parsers need. Save to the
-scratchpad, never into the repo.
+Never `WebFetch` for these — WebFetch summarizes through a small model and
+destroys the table structure the parsers need. Save to the scratchpad, never
+into the repo. Read `board_fetch.json`'s `results` to judge each file below
+(`ok: true` and the file contains `<table` is success).
 
-- **Simplify fetch fails** (nonzero exit, empty file, or no `<table` in it):
+- **Simplify fetch fails** (`ok: false`, empty file, or no `<table` in it):
   stop and say the scan couldn't run, and why. Do NOT report "0 postings" —
   that reads as "nothing new" when the truth is "couldn't check."
 - **speedyapply fetch fails** (New Grad only): not fatal. Continue
@@ -67,13 +74,16 @@ scratchpad, never into the repo.
 Always run the scripts — these files are thousands of rows, and eyeballing
 them misses same-day postings a parser catches cleanly.
 
+The two parsers read independent files — run them in the same background
+batch rather than one after the other (New Grad only runs the second, and
+only if the speedyapply fetch succeeded):
+
 ```bash
 python3 scripts/parse_simplify_jobs.py <scratchpad>/simplify.md \
-  --categories <active flags, e.g. swe,dsa,quant> --days <N> > <scratchpad>/s.json
-
-# New Grad only, and only if the speedyapply fetch succeeded:
+  --categories <active flags, e.g. swe,dsa,quant> --days <N> > <scratchpad>/s.json &
 python3 scripts/parse_speedyapply_jobs.py <scratchpad>/speedyapply.md \
-  --categories <same> --days <same> > <scratchpad>/p.json
+  --categories <same> --days <same> > <scratchpad>/p.json &
+wait
 
 python3 scripts/merge_and_filter_jobs.py --simplify <scratchpad>/s.json \
   [--speedyapply <scratchpad>/p.json] \
@@ -98,13 +108,37 @@ resume but the role couldn't be confirmed as the same posting. Keep it in the
 table and append that note to its Note column. Surfacing beats silently
 hiding a possibly-different opening.
 
+## Step 2.4 — Batch-fetch JDs once
+
+Steps 2.5 and 3 each need certain postings' JD pages. Fetch the **union** of
+both needs here, in one pass, so no JD is ever fetched twice in the same run:
+
+- every entry with `adv_degree: true` (needed by Step 2.5), plus
+- if `--compare-offer` is active, every entry with no `salary` field that
+  isn't already headed for a drop on every other signal (needed by Step 3).
+
+```bash
+python3 scripts/fetch_urls.py --urls-file <scratchpad>/jd_urls.txt \
+  --out-dir <scratchpad>/jds --concurrency 8 --strip-tags > <scratchpad>/jd_fetch.json
+```
+
+One line per `apply_url` in the union, no name column needed (the manifest
+maps each URL back to its saved `.txt`). Steps 2.5 and 3 both read from
+`jd_fetch.json` and the `.txt` files it wrote — neither step fetches on its
+own, and a URL present in both needs (rare, but possible for a hatted
+compare-offer posting with no stated salary) is only fetched once.
+
+A failed fetch is not fatal to either downstream check — `ok: false` in the
+manifest means "keep the posting, mark it unverified," exactly as each step
+already specifies.
+
 ## Step 2.5 — Verify advanced-degree (🎓) postings
 
 Every entry with `adv_degree: true` must have its JD checked **before it
-reaches the table**. The board's role title routinely hides the requirement —
-a row listed as "Software Engineer Early Career, Multiple Teams" turned out to
-be "Software Engineer, Infrastructure, PhD, Early Career," with a PhD as a
-minimum qualification.
+reaches the table**, using Step 2.4's cache. The board's role title routinely
+hides the requirement — a row listed as "Software Engineer Early Career,
+Multiple Teams" turned out to be "Software Engineer, Infrastructure, PhD,
+Early Career," with a PhD as a minimum qualification.
 
 **Resolve the user's own degree level first**, from `knowledge/education.md`
 (the degree in progress, and its expected completion date). Everything below
@@ -115,7 +149,8 @@ bachelor's candidate drops. If `education.md` is missing or its degree level
 is ambiguous, keep every hatted posting and note the flag as unverified
 rather than assuming bachelor's.
 
-Then fetch the `apply_url` and read the minimum-qualifications section:
+Then read the cached JD text (`<scratchpad>/jds/<name>.txt` per the Step 2.4
+manifest) for the minimum-qualifications section:
 
 - **Required degree is above the user's** (it appears under minimum/required
   qualifications, or the title/cohort names the degree) → drop the posting as
@@ -135,8 +170,9 @@ start-date cohort mismatch is checked later, per posting, in
 
 Never surface a hatted posting unchecked and leave the disqualification for
 the user to catch. Google Careers and many ATS pages are JS-rendered and
-return only nav chrome through `WebFetch`; `curl -sL` with a browser
-User-Agent, then stripping tags, usually recovers the qualifications text.
+return only nav chrome through `WebFetch`; `fetch_urls.py`'s browser
+User-Agent plus its `--strip-tags` pass usually recovers the qualifications
+text where plain `WebFetch` fails.
 
 ## Step 3 — Optional current-offer comparison
 
@@ -156,16 +192,15 @@ Only if the user opted in.
   `$202k/yr`), and the parser passes it straight through. Never fetch a JD or
   estimate for a posting whose figure is already in the JSON.
 - **For every remaining posting** (no `salary` field, and not already headed
-  for a drop on every other signal), fetch the JD and scan for a stated
-  salary/range — Simplify's table never carries comp, and speedyapply's
-  "Other" rows don't either. This step is mandatory, not something to skip
-  for speed: a stated JD figure is the single biggest driver of tier
-  placement, and defaulting straight to "Worth a skim" without checking
-  misclassifies postings that actually beat the bar. **Fetch these JDs in
-  parallel**, not one at a time — loop `curl -sL` (with a browser
-  User-Agent) over all the URLs into a scratchpad directory as a single
-  backgrounded batch (or `xargs -P`), then parse every saved file in one
-  pass. Sequential fetches burn latency for no benefit; a stated figure in
+  for a drop on every other signal), scan its cached JD text from Step 2.4
+  for a stated salary/range — Simplify's table never carries comp, and
+  speedyapply's "Other" rows don't either. This step is mandatory, not
+  something to skip for speed: a stated JD figure is the single biggest
+  driver of tier placement, and defaulting straight to "Worth a skim" without
+  checking misclassifies postings that actually beat the bar. These postings
+  must already be in Step 2.4's fetch union — if one was missed there
+  (compare-offer turned on after that step ran, for instance), fetch it now
+  the same way rather than falling straight to levels.fyi. A stated figure in
   the JD or table is authoritative and takes precedence over any estimate —
   never relabel it as one.
 - **Only after** the JD check comes up empty for a posting, fall back to a
@@ -201,6 +236,11 @@ against). Everything else is identical.
 - **TC** — only when actually findable: the entry's `salary` field, a figure
   stated in the JD, or a levels.fyi estimate written `~$X (est.)`
   (compare-offer runs only; that lookup belongs to Step 3, never to this
+  step). When the JD also names bonus, equity, or stock as part of comp
+  (e.g. "+ bonus + equity," "+ RSUs"), append it to the base figure instead
+  of dropping it — e.g. `$134k-$168k + bonus + equity` — since a base-only
+  number understates the real offer. Never invent an equity value the JD
+  doesn't state.
   step). Otherwise `—`.
 - **Posted** — the `age_raw` field (`1d`, `3d`).
 - **Tier** — Step 3's classification. Sort Better → Comparable → Worth a

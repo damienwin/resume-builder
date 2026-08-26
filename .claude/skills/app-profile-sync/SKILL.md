@@ -44,7 +44,9 @@ python3 "$STORE" paths
 
 ## Step 1 — Gather facts from knowledge/
 
-Read frontmatter (and only what's needed from bodies) of:
+Read every file below **in one parallel batch** (single message, one Read per
+file — never sequentially), the same as `tailor-resume`'s knowledge-base
+step. Read frontmatter (and only what's needed from bodies) of:
 
 - `knowledge/profile.md` — name, email, phone, location, github, linkedin,
   website. **If `phone` is blank, ask the user for it once** (forms always
