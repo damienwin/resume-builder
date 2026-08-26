@@ -110,12 +110,19 @@ hiding a possibly-different opening.
 
 ## Step 2.4 — Batch-fetch JDs once
 
-Steps 2.5 and 3 each need certain postings' JD pages. Fetch the **union** of
-both needs here, in one pass, so no JD is ever fetched twice in the same run:
+Steps 2.5, 3, and 4 each need certain postings' JD pages. Fetch the **union**
+of all three needs here, in one pass, so no JD is ever fetched twice in the
+same run:
 
 - every entry with `adv_degree: true` (needed by Step 2.5), plus
-- if `--compare-offer` is active, every entry with no `salary` field that
-  isn't already headed for a drop on every other signal (needed by Step 3).
+- if `--compare-offer` is active, every entry that isn't already headed for a
+  drop on every other signal — **including one with a `salary` field already
+  populated.** A known base figure only means Step 3 skips re-deriving *that*
+  number from the JD; Step 4 still needs the JD text to check for stated
+  bonus/equity/RSU language to append to it. Skipping the fetch here is what
+  silently drops real stated equity (a JD stating "your package will include
+  sign-on payments and RSUs" is worthless to Step 4 if the JD was never
+  fetched because the base salary was already known).
 
 ```bash
 python3 scripts/fetch_urls.py --urls-file <scratchpad>/jd_urls.txt \
@@ -189,8 +196,10 @@ Only if the user opted in.
   `current_offer.md`'s company/comp/level.
 - **Use the entry's own `salary` first.** speedyapply's FAANG+ and Quant
   tables carry a Salary column (roughly a fifth of its rows have one, e.g.
-  `$202k/yr`), and the parser passes it straight through. Never fetch a JD or
-  estimate for a posting whose figure is already in the JSON.
+  `$202k/yr`), and the parser passes it straight through. Never re-derive or
+  estimate a base figure for a posting whose salary is already in the JSON —
+  but its JD is still in the Step 2.4 fetch union, and Step 4 reads that
+  cached text for stated bonus/equity/RSU language to append.
 - **For every remaining posting** (no `salary` field, and not already headed
   for a drop on every other signal), scan its cached JD text from Step 2.4
   for a stated salary/range — Simplify's table never carries comp, and
