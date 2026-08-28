@@ -70,9 +70,12 @@ def split_row(line: str):
     return cells
 
 
-def parse(md_text: str, wanted_categories: set[str], max_days: float):
+def parse(md_text: str, wanted_categories: set[str], max_days: float, since=None):
     entries = []
     scanned = 0
+    # Topmost row in each table, independent of --days/category filters -
+    # see the matching comment in parse_simplify_jobs.py.
+    section_top = {}
 
     for section, marker_re in SECTION_MARKERS:
         m = marker_re.search(md_text)
@@ -93,10 +96,6 @@ def parse(md_text: str, wanted_categories: set[str], max_days: float):
             else:
                 salary, apply_cell, age = None, cells[3], cells[4]
 
-            age_days = age_to_days(age)
-            if age_days > max_days:
-                continue
-
             name_m = re.search(r"<strong>([^<]+)</strong>", company_cell)
             company = name_m.group(1).strip() if name_m else re.sub(r"<[^>]+>", "", company_cell).strip()
 
@@ -104,11 +103,29 @@ def parse(md_text: str, wanted_categories: set[str], max_days: float):
             apply_url = url_m.group(1) if url_m else None
 
             category = classify_category(section, role)
+
+            if apply_url and section not in section_top:
+                section_top[section] = apply_url
+
+            # Each of the three tables (faang/quant/other) is independently
+            # newest-first, but they are NOT one merged chronological list
+            # across tables - so the marker boundary must be per table
+            # (section), not per category. Hitting last run's top row for
+            # this section means everything below in this section was
+            # already seen.
+            if since and since.get(section) and apply_url == since[section]:
+                break
+
             if category not in wanted_categories:
+                continue
+
+            age_days = age_to_days(age)
+            if age_days > max_days:
                 continue
 
             entries.append({
                 "category": category,
+                "section": section,
                 "company": company,
                 "role": role,
                 "location": location,
@@ -122,7 +139,7 @@ def parse(md_text: str, wanted_categories: set[str], max_days: float):
                 "source": "speedyapply",
             })
 
-    return {"entries": entries, "scanned": scanned, "closed_excluded": 0}
+    return {"entries": entries, "scanned": scanned, "closed_excluded": 0, "section_top": section_top}
 
 
 def main():
@@ -130,13 +147,21 @@ def main():
     ap.add_argument("md_path")
     ap.add_argument("--categories", required=True, help="comma-separated: swe,pm,dsa,quant,hw")
     ap.add_argument("--days", type=float, default=7)
+    ap.add_argument(
+        "--since-json",
+        help="JSON object mapping section (faang/quant/other, NOT category "
+        "- each table mixes categories) -> apply_url of that table's "
+        "newest row seen last run. --days still applies as a fallback "
+        "bound for sections with no marker.",
+    )
     args = ap.parse_args()
 
     with open(args.md_path, encoding="utf-8") as f:
         text = f.read()
 
     wanted = {c.strip() for c in args.categories.split(",") if c.strip()}
-    result = parse(text, wanted, args.days)
+    since = json.loads(args.since_json) if args.since_json else None
+    result = parse(text, wanted, args.days, since)
     json.dump(result, sys.stdout, indent=2)
     print()
 

@@ -47,13 +47,20 @@ def strip_tags(html: str) -> str:
     return re.sub(r"<[^>]+>", "", html).strip()
 
 
-def parse(readme_text: str, wanted_categories: set[str], max_days: float):
+def parse(readme_text: str, wanted_categories: set[str], max_days: float, since=None):
     heads = [(m.start(), m.group(1)) for m in HEADING_RE.finditer(readme_text)]
     heads.append((len(readme_text), None))
 
     entries = []
     scanned = 0
     closed_excluded = 0
+    # The topmost non-closed row in each category section, independent of
+    # the --days filter. This is the correct "since last scan" pointer - a
+    # category with zero rows *within the day window* still has a real
+    # newest row above the fold, and using it (instead of leaving the
+    # category markerless) is what avoids the next --since-last-scan run
+    # falling back to a wide re-scan of that whole category.
+    category_top = {}
 
     for i in range(len(heads) - 1):
         section_name = heads[i][1]
@@ -82,6 +89,17 @@ def parse(readme_text: str, wanted_categories: set[str], max_days: float):
                 company = re.sub(r"^[\U0001F300-\U0001FAFF\s]+", "", raw_name).strip()
                 last_company = company
 
+            apply_urls = re.findall(r'<a href="([^"]+)"', apply_html)
+            apply_url = apply_urls[0] if apply_urls else None
+
+            if apply_url and category not in category_top:
+                category_top[category] = apply_url
+
+            # Board is newest-first within each category section, so hitting
+            # last run's top posting means everything below was already seen.
+            if since and since.get(category) and apply_url == since[category]:
+                break
+
             if closed:
                 closed_excluded += 1
                 continue
@@ -89,9 +107,6 @@ def parse(readme_text: str, wanted_categories: set[str], max_days: float):
             age_days = age_to_days(age.strip())
             if age_days > max_days:
                 continue
-
-            apply_urls = re.findall(r'<a href="([^"]+)"', apply_html)
-            apply_url = apply_urls[0] if apply_urls else None
 
             entries.append({
                 "category": category,
@@ -107,7 +122,12 @@ def parse(readme_text: str, wanted_categories: set[str], max_days: float):
                 "source": "simplify",
             })
 
-    return {"entries": entries, "scanned": scanned, "closed_excluded": closed_excluded}
+    return {
+        "entries": entries,
+        "scanned": scanned,
+        "closed_excluded": closed_excluded,
+        "category_top": category_top,
+    }
 
 
 def main():
@@ -115,13 +135,23 @@ def main():
     ap.add_argument("readme_path")
     ap.add_argument("--categories", required=True, help="comma-separated: swe,pm,dsa,quant")
     ap.add_argument("--days", type=float, default=7)
+    ap.add_argument(
+        "--since-json",
+        help="JSON object mapping category -> apply_url of the newest "
+        "posting seen last run (e.g. '{\"swe\": \"https://...\"}'). "
+        "Stops each category's section as soon as that posting is hit, "
+        "instead of relying on --days. --days still applies as a fallback "
+        "bound for categories with no marker, or if the marker posting "
+        "was removed from the board since last run.",
+    )
     args = ap.parse_args()
 
     with open(args.readme_path, encoding="utf-8") as f:
         text = f.read()
 
     wanted = {c.strip() for c in args.categories.split(",") if c.strip()}
-    result = parse(text, wanted, args.days)
+    since = json.loads(args.since_json) if args.since_json else None
+    result = parse(text, wanted, args.days, since)
     json.dump(result, sys.stdout, indent=2)
     print()
 

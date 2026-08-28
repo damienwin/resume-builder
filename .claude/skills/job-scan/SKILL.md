@@ -12,14 +12,28 @@ posting or comp figure.
 ## Step 0 — Resolve inputs
 
 Four inputs: **board** (new-grad/internship), **categories**
-(`swe` `pm` `dsa` `quant`, plus opt-in `hw`), **recency** (`--days N`,
-default 7, always a plain rolling window from today), and **compare to
+(`swe` `pm` `dsa` `quant`, plus opt-in `hw`), **recency**, and **compare to
 current offer** (yes/no).
+
+Recency is one of two modes, mutually exclusive:
+
+- **`--days N`** — a plain rolling window from today (default 7).
+- **`--since-last-scan`** — everything newer than the last successful scan
+  of this same board, read from `knowledge/job_scan_state.json` (see
+  Step 2.4). This is the tighter, exact option once at least one prior scan
+  exists — no risk of re-showing something from 20 hours ago just because it
+  rounds up to "1 day." First-ever run for a board (no state file, or the
+  board's not in it yet) silently falls back to the `--days` default.
+
+Recency is always presented as one choice between these two modes, not a
+second independent input — asking "how many days, AND since last scan y/n"
+would be two questions for one setting.
 
 Resolve each in this order, stopping at the first that covers it:
 
 1. An explicit flag in `$ARGUMENTS` (`new-grad`/`internship`,
-   `--swe --pm --dsa --quant --hw --startup`, `--days N`, `--compare-offer`).
+   `--swe --pm --dsa --quant --hw --startup`, `--days N` or
+   `--since-last-scan`, `--compare-offer`).
 2. A "Job scan defaults" section in `knowledge/rules.md` — used silently, no
    prompt. If the user's current message contradicts a stored default, follow
    the message for this run only; don't rewrite `rules.md` over an off-hand
@@ -28,7 +42,10 @@ Resolve each in this order, stopping at the first that covers it:
    categories, so this takes **two calls**: call 1 covers board, categories
    (multi-select; default all four core ones if none picked), recency, and
    offer-comparison; call 2 is a single yes/no for hardware (default no).
-   Skip either call entirely if nothing in it is still unresolved.
+   Skip either call entirely if nothing in it is still unresolved. For
+   recency, offer it as one single-select question with options like "Since
+   last scan (recommended once one exists)", "0 days (today only)", "1 day",
+   "3 days" — not a free-text day count.
 
 Never offer `startup` as a checklist option — it's a pass-through that never
 filters, and presenting a no-op as a selectable filter misleads the user. It
@@ -74,9 +91,10 @@ into the repo. Read `board_fetch.json`'s `results` to judge each file below
 Always run the scripts — these files are thousands of rows, and eyeballing
 them misses same-day postings a parser catches cleanly.
 
-The two parsers read independent files — run them in the same background
-batch rather than one after the other (New Grad only runs the second, and
-only if the speedyapply fetch succeeded):
+Run both parsers in parallel too, same reasoning as Step 1 (New Grad only
+runs the second, and only if the speedyapply fetch succeeded).
+
+**`--days N` mode** (the default):
 
 ```bash
 python3 scripts/parse_simplify_jobs.py <scratchpad>/simplify.md \
@@ -84,7 +102,35 @@ python3 scripts/parse_simplify_jobs.py <scratchpad>/simplify.md \
 python3 scripts/parse_speedyapply_jobs.py <scratchpad>/speedyapply.md \
   --categories <same> --days <same> > <scratchpad>/p.json &
 wait
+```
 
+**`--since-last-scan` mode**: read `knowledge/job_scan_state.json`'s
+`<board>.simplify` and `<board>.speedyapply` objects (missing file or
+missing board key → treat as `{}`) and pass each as `--since-json`, still
+with a `--days` fallback bound (14) for any category/section with no marker
+yet (new board, or a category that surfaced nothing last run):
+
+```bash
+SIMPLIFY_SINCE=$(python3 -c "import json;print(json.dumps(json.load(open('knowledge/job_scan_state.json')).get('<board>',{}).get('simplify',{})))" 2>/dev/null || echo '{}')
+SPEEDY_SINCE=$(python3 -c "import json;print(json.dumps(json.load(open('knowledge/job_scan_state.json')).get('<board>',{}).get('speedyapply',{})))" 2>/dev/null || echo '{}')
+
+python3 scripts/parse_simplify_jobs.py <scratchpad>/simplify.md \
+  --categories <active flags> --days 14 --since-json "$SIMPLIFY_SINCE" > <scratchpad>/s.json &
+python3 scripts/parse_speedyapply_jobs.py <scratchpad>/speedyapply.md \
+  --categories <same> --days 14 --since-json "$SPEEDY_SINCE" > <scratchpad>/p.json &
+wait
+```
+
+`--since-json` for simplify is keyed by **category** (its sections are
+literally per-category headings). For speedyapply it's keyed by **section**
+(`faang`/`quant`/`other`) — that source's three tables each mix categories
+and are independently newest-first, so the stop boundary has to be the table,
+not the category; see the parser's own docstring/comments before changing
+this.
+
+Then, either mode:
+
+```bash
 python3 scripts/merge_and_filter_jobs.py --simplify <scratchpad>/s.json \
   [--speedyapply <scratchpad>/p.json] \
   --archive "<the 'Output archive' subfolder for this board from rules.md>"
@@ -108,13 +154,29 @@ resume but the role couldn't be confirmed as the same posting. Keep it in the
 table and append that note to its Note column. Surfacing beats silently
 hiding a possibly-different opening.
 
-## Step 2.4 — Batch-fetch JDs once
+## Step 2.4 — Persist scan state
 
-Steps 2.5, 3, and 4 each need certain postings' JD pages. Fetch the **union**
+After `s.json` (and `p.json`, if run) exist, update the marker file so a
+future `--since-last-scan` run knows where this one left off — regardless of
+which recency mode *this* run used:
+
+```bash
+python3 scripts/update_scan_state.py --board <new-grad|internship> \
+  --simplify <scratchpad>/s.json [--speedyapply <scratchpad>/p.json] \
+  --state-file knowledge/job_scan_state.json
+```
+
+Do this unconditionally on every successful parse, right after Step 2 and
+before the JD fetch — it's cheap, and skipping it on a `--days`-mode run
+would leave the next `--since-last-scan` run pointed at stale markers.
+
+## Step 2.5 — Batch-fetch JDs once
+
+Steps 2.6, 3, and 4 each need certain postings' JD pages. Fetch the **union**
 of all three needs here, in one pass, so no JD is ever fetched twice in the
 same run:
 
-- every entry with `adv_degree: true` (needed by Step 2.5), plus
+- every entry with `adv_degree: true` (needed by Step 2.6), plus
 - if `--compare-offer` is active, every entry that isn't already headed for a
   drop on every other signal — **including one with a `salary` field already
   populated.** A known base figure only means Step 3 skips re-deriving *that*
@@ -139,10 +201,10 @@ A failed fetch is not fatal to either downstream check — `ok: false` in the
 manifest means "keep the posting, mark it unverified," exactly as each step
 already specifies.
 
-## Step 2.5 — Verify advanced-degree (🎓) postings
+## Step 2.6 — Verify advanced-degree (🎓) postings
 
 Every entry with `adv_degree: true` must have its JD checked **before it
-reaches the table**, using Step 2.4's cache. The board's role title routinely
+reaches the table**, using Step 2.5's cache. The board's role title routinely
 hides the requirement — a row listed as "Software Engineer Early Career,
 Multiple Teams" turned out to be "Software Engineer, Infrastructure, PhD,
 Early Career," with a PhD as a minimum qualification.
@@ -156,7 +218,7 @@ bachelor's candidate drops. If `education.md` is missing or its degree level
 is ambiguous, keep every hatted posting and note the flag as unverified
 rather than assuming bachelor's.
 
-Then read the cached JD text (`<scratchpad>/jds/<name>.txt` per the Step 2.4
+Then read the cached JD text (`<scratchpad>/jds/<name>.txt` per the Step 2.5
 manifest) for the minimum-qualifications section:
 
 - **Required degree is above the user's** (it appears under minimum/required
@@ -198,16 +260,16 @@ Only if the user opted in.
   tables carry a Salary column (roughly a fifth of its rows have one, e.g.
   `$202k/yr`), and the parser passes it straight through. Never re-derive or
   estimate a base figure for a posting whose salary is already in the JSON —
-  but its JD is still in the Step 2.4 fetch union, and Step 4 reads that
-  cached text for stated bonus/equity/RSU language to append.
+  but its JD is still fetched for stated bonus/equity/RSU language to append
+  (Step 2.5).
 - **For every remaining posting** (no `salary` field, and not already headed
-  for a drop on every other signal), scan its cached JD text from Step 2.4
+  for a drop on every other signal), scan its cached JD text from Step 2.5
   for a stated salary/range — Simplify's table never carries comp, and
   speedyapply's "Other" rows don't either. This step is mandatory, not
   something to skip for speed: a stated JD figure is the single biggest
   driver of tier placement, and defaulting straight to "Worth a skim" without
   checking misclassifies postings that actually beat the bar. These postings
-  must already be in Step 2.4's fetch union — if one was missed there
+  must already be in Step 2.5's fetch union — if one was missed there
   (compare-offer turned on after that step ran, for instance), fetch it now
   the same way rather than falling straight to levels.fyi. A stated figure in
   the JD or table is authoritative and takes precedence over any estimate —
@@ -249,8 +311,7 @@ against). Everything else is identical.
   (e.g. "+ bonus + equity," "+ RSUs"), append it to the base figure instead
   of dropping it — e.g. `$134k-$168k + bonus + equity` — since a base-only
   number understates the real offer. Never invent an equity value the JD
-  doesn't state.
-  step). Otherwise `—`.
+  doesn't state. Otherwise `—`.
 - **Posted** — the `age_raw` field (`1d`, `3d`).
 - **Tier** — Step 3's classification. Sort Better → Comparable → Worth a
   skim, newest first within each tier, then company name alphabetically so
@@ -264,7 +325,7 @@ against). Everything else is identical.
   industry leader, notable funding). For a Worth-a-skim posting with no such
   signal the company description alone is enough; don't manufacture an angle.
   Append any `applied_note` here too, plus any known **application cap**
-  (below) and any Step 2.5 degree note.
+  (below) and any Step 2.6 degree note.
 
 **Application caps.** Some employers limit how many roles one candidate may
 have open at once (TikTok, for example, allows 2). A cap makes each
@@ -281,7 +342,9 @@ uncapped.
 
 - Scanned vs. surfaced. On New Grad, break scanned down by source rather than
   giving one merged number.
-- The day window and its resolved cutoff date.
+- The recency mode used: the day window and its resolved cutoff date for
+  `--days`, or "since last scan" for `--since-last-scan` (and if any
+  category/section had no marker and fell back to the 14-day bound, say so).
 - Closed postings excluded, cross-source duplicates dropped, and
   already-applied entries dropped — each only if nonzero. Don't pad the
   report with zero-count lines.
@@ -304,7 +367,8 @@ fork-out. Don't improvise it from memory.
 
 ```bash
 python3 scripts/log_metric.py job_scan '{
-  "board": "<new-grad|internship>", "categories": ["swe", ...], "days": <N>,
+  "board": "<new-grad|internship>", "categories": ["swe", ...],
+  "recency": "<since-last-scan|days>", "days": <N, or the 14 fallback bound>,
   "scanned": <N>, "scanned_simplify": <N>, "scanned_speedyapply": <N or omit>,
   "closed_excluded": <N>, "cross_source_dropped": <N or omit if 0>,
   "already_applied_dropped": <N>, "surfaced": <final count>,
