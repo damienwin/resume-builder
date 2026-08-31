@@ -52,9 +52,16 @@ python3 scripts/run_timer.py mark tailor-resume read_knowledge
 Rank every experience, research entry, and project against the JD using
 `tech`/`domain` frontmatter plus body content. Select what fits one page:
 
-- **3–4 experiences** (`experience/` + `research/` combined), most relevant
-  and most recent first.
-- **1–2 projects** most aligned with the JD. Prefer ones with a `repo:` —
+- **3 experiences** (from `experience/`), most relevant and most recent
+  first. **Do not add a 4th** — the production-experience signal saturates
+  at 3, so a fourth costs most of a project's worth of page space for no
+  gain.
+- **A `research/` entry belongs in Projects, not Experience.** Rendered as a
+  fourth experience it lands in a category that's already saturated;
+  rendered as a project it still counts for something.
+- **3 projects** most aligned with the JD — fill all three slots. Drop to 2
+  only when the page truly cannot hold a third; never ship 1. Prefer ones
+  with a `repo:` —
   AI screeners deduct per unlinked project. `origin: work` and
   `origin: research` projects are exempt (no public repo expected); a plain
   `origin: self` project with no `repo:` loses to a linked alternative that
@@ -125,11 +132,13 @@ python3 scripts/run_timer.py mark tailor-resume write_bullets
 Read `templates/jakes_resume.tex` and fill every `<<PLACEHOLDER>>` into
 `build/resume.tex`:
 
-- Header (name, email, github, linkedin) from `profile.md` — the
-  `\hypersetup` PDF metadata block also takes the name. If `website:` is
-  filled, append it to the header as a fourth `$|$`-separated link
-  (`\href{https://<<WEBSITE>>}{<<WEBSITE>>}`, no `https://` in the display
-  text).
+- Header (name, email, github, linkedin, **website**) from `profile.md` —
+  the `\hypersetup` PDF metadata block also takes the name. `<<WEBSITE>>` is
+  a required placeholder, not an optional flourish: fill it whenever
+  `profile.md` has a `website:`, with no `https://` in the display text.
+  Screeners award a bonus point for a portfolio site and there is no reason
+  to leave it on the table. Only if `website:` is genuinely empty, delete
+  that header line and the `$|$` that precedes it.
 - Education from `education.md`; only the coursework line changes per JD.
 - Repeat `\resumeSubheading` / `\resumeProjectHeading` per selected item.
 - **Each project's `\resumeProjectHeading` right cell renders links, not a
@@ -182,18 +191,32 @@ grep -i "overfull" /tmp/tectonic.log     # heading-row overflow check
 `brew install poppler`. On macOS `mdls -name kMDItemNumberOfPages
 build/resume.pdf` also gives page count.)
 
-Check all six against the extracted text; fix the `.tex`, recompile, and
+Check all seven against the extracted text; fix the `.tex`, recompile, and
 re-verify on any failure.
 
-1. **Exactly one page.**
-   - *Over* → shrink before cutting: drop to
-     `\documentclass[letterpaper,10pt]{article}`, tighten
-     `\resumeItemListStart` to
-     `\begin{itemize}[itemsep=1pt, topsep=2pt, parsep=0pt]`. Still over →
-     drop the weakest bullet from the longest role → shorten two-line
-     bullets → drop a project before dropping an experience.
-   - *Under*, with significant trailing whitespace → add back a bullet,
-     experience, or project. The page must look full.
+1. **Exactly one page, and visually full.** Measure the fill — don't eyeball
+   it:
+
+   ```bash
+   pdftotext -bbox build/resume.pdf - | grep -o 'yMax="[0-9.]*"' \
+     | sed 's/[^0-9.]//g' | sort -n | tail -1
+   ```
+
+   That prints the last text baseline, out of 792pt. A full page lands at
+   **740-755**. Treat anything **below 720 as a failed check**, not a
+   cosmetic nit — an under-filled page is the most common defect in this
+   repo's output, and it always means content that would have scored was
+   left out.
+   - *Over* (2 pages) → shrink before cutting: tighten `\resumeItemListStart`
+     to `\begin{itemize}[itemsep=1pt, topsep=2pt, parsep=0pt]`, then drop to
+     `\documentclass[letterpaper,10pt]{article}`. Still over → drop the
+     weakest bullet from the longest role → shorten two-line bullets → drop
+     a project. Never drop below 3 experiences or 2 projects.
+   - *Under 720* → add content back and recompile, in this order: a third
+     project → a bullet on the thinnest project → a bullet on the thinnest
+     role. Roughly 12pt per bullet line, 37pt per project block (heading +
+     2 bullets). Re-measure after each addition; stop once past 740.
+   - Adding a **4th experience is never the way to fill space** — see Step 3.
 2. **Clean extraction** — grep the `-layout` output for every metric;
    nothing glued or garbled. Reword rather than fight the font.
 3. **Reading order** — the no-`-layout` output reads header → education →
@@ -210,6 +233,16 @@ re-verify on any failure.
 6. **No overfull-hbox warnings** on any `\resumeSubheading` or
    `\resumeProjectHeading` line. This is the Step 5 overflow bug, not
    cosmetic noise.
+7. **Header complete, no unfilled placeholders.**
+
+   ```bash
+   grep -c '<<' build/resume.tex                        # must be 0
+   pdftotext build/resume.pdf - | head -4 | grep -c .   # header lines present
+   ```
+
+   Any surviving `<<PLACEHOLDER>>` is a failed check. Confirm the header
+   carries email, github, linkedin, and the website from `profile.md` —
+   the website is the one that gets dropped most often.
 
 Compilation errors → read the output, fix the `.tex`, recompile.
 
