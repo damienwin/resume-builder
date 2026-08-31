@@ -1,6 +1,6 @@
 ---
 name: job-scan
-description: Scan Simplify Jobs' New-Grad-Positions or Summer-Internships GitHub board (New Grad runs also merge speedyapply/2027-SWE-College-Jobs) for postings from the last N days (default 7), filtered interactively by category, with an optional comparison against the user's current offer. Use when the user wants to browse or check for new job/internship postings, e.g. "/job-scan", "any new SWE new grad roles?", "check simplify for internships".
+description: Scan Simplify Jobs' New-Grad-Positions or Summer-Internships GitHub board (New Grad runs also merge speedyapply/2027-SWE-College-Jobs and speedyapply/2027-AI-College-Jobs) for postings from the last N days (default 7), filtered interactively by category, with an optional comparison against the user's current offer. Use when the user wants to browse or check for new job/internship postings, e.g. "/job-scan", "any new SWE new grad roles?", "check simplify for internships".
 ---
 
 # job-scan — Scan job boards, filtered to what matters
@@ -57,18 +57,41 @@ confirmation. Skip the offer if `rules.md` already covered everything.
 
 ## Step 1 — Fetch
 
+Start the run timer before the first fetch (fire-and-forget, same as the
+metrics log — see Step 7):
+
+```bash
+python3 scripts/run_timer.py start job-scan
+```
+
 | Board | Sources |
 |---|---|
-| New Grad | `SimplifyJobs/New-Grad-Positions` `dev` `README.md` **plus** `speedyapply/2027-SWE-College-Jobs` `main` `NEW_GRAD_USA.md` |
+| New Grad | `SimplifyJobs/New-Grad-Positions` `dev` `README.md` **plus** `speedyapply/2027-SWE-College-Jobs` `main` `NEW_GRAD_USA.md` **plus** `speedyapply/2027-AI-College-Jobs` `main` `NEW_GRAD_USA.md` |
 | Internship | `SimplifyJobs/Summer2027-Internships` `dev` `README.md` only |
 
-speedyapply is merged into every New Grad run by default (no flag gates it);
-it isn't wired in for internships (different format, not yet reviewed).
+Both speedyapply boards are merged into every New Grad run by default (no
+flag gates either); neither is wired in for internships (different format,
+not yet reviewed). The two speedyapply boards are otherwise-independent
+sources — same file layout, disjoint postings (the AI board runs its own
+separate FAANG/Quant/Other tables, e.g. carrying GTS, Man Group, and Flow
+Traders that the SWE board's `quant` table misses) — so they're fetched,
+parsed, and tracked in `job_scan_state.json` as two distinct sources, not
+merged into one `speedyapply` bucket. The AI board's parser call uses
+`--source-name speedyapply_ai --default-category dsa`: its unmatched rows
+skew data-science rather than general SWE, and a distinct `source` name is
+required for cross-source dedupe to treat it as its own board (see
+`merge_and_filter_jobs.py`'s docstring). Its analyst/consultant/GTM-family
+rows (e.g. "Data Analyst", "Management Consultant - AI Strategy Evaluation")
+classify to a category no run ever requests, so they're filtered out
+automatically rather than needing a company denylist — a real quant-analyst
+title like "Quantitative Risk Management - Summer Analyst" is unaffected
+since the quant keyword match happens first.
 
 Fetch every board file for this run **in one parallel batch** — the boards
 are independent, so fetching them one at a time burns latency for no benefit.
 Write one line per file to a urls-file (tab-separated `<url>\t<name>`, e.g.
-`simplify.md`, `speedyapply.md`) and pass it to `scripts/fetch_urls.py`:
+`simplify.md`, `speedyapply.md`, `speedyapply_ai.md`) and pass it to
+`scripts/fetch_urls.py`:
 
 ```bash
 python3 scripts/fetch_urls.py --urls-file <scratchpad>/board_urls.txt \
@@ -83,16 +106,22 @@ into the repo. Read `board_fetch.json`'s `results` to judge each file below
 - **Simplify fetch fails** (`ok: false`, empty file, or no `<table` in it):
   stop and say the scan couldn't run, and why. Do NOT report "0 postings" —
   that reads as "nothing new" when the truth is "couldn't check."
-- **speedyapply fetch fails** (New Grad only): not fatal. Continue
-  Simplify-only and note the degraded fetch in Step 6.
+- **A speedyapply fetch fails** (either board, New Grad only): not fatal.
+  Continue with whichever sources succeeded and note the degraded fetch in
+  Step 6, naming which board (SWE or AI) failed.
+
+```bash
+python3 scripts/run_timer.py mark job-scan fetch_boards
+```
 
 ## Step 2 — Parse, merge, filter
 
 Always run the scripts — these files are thousands of rows, and eyeballing
 them misses same-day postings a parser catches cleanly.
 
-Run both parsers in parallel too, same reasoning as Step 1 (New Grad only
-runs the second, and only if the speedyapply fetch succeeded).
+Run all parsers in parallel too, same reasoning as Step 1 (New Grad only
+runs the speedyapply parsers, and only for whichever of the two fetches
+succeeded).
 
 **`--days N` mode** (the default):
 
@@ -100,69 +129,103 @@ runs the second, and only if the speedyapply fetch succeeded).
 python3 scripts/parse_simplify_jobs.py <scratchpad>/simplify.md \
   --categories <active flags, e.g. swe,dsa,quant> --days <N> > <scratchpad>/s.json &
 python3 scripts/parse_speedyapply_jobs.py <scratchpad>/speedyapply.md \
-  --categories <same> --days <same> > <scratchpad>/p.json &
+  --categories <same> --days <same> \
+  --source-name speedyapply --default-category swe > <scratchpad>/p.json &
+python3 scripts/parse_speedyapply_jobs.py <scratchpad>/speedyapply_ai.md \
+  --categories <same> --days <same> \
+  --source-name speedyapply_ai --default-category dsa > <scratchpad>/pai.json &
 wait
 ```
 
 **`--since-last-scan` mode**: read `knowledge/job_scan_state.json`'s
-`<board>.simplify` and `<board>.speedyapply` objects (missing file or
-missing board key → treat as `{}`) and pass each as `--since-json`, still
-with a `--days` fallback bound (14) for any category/section with no marker
-yet (new board, or a category that surfaced nothing last run):
+`<board>.simplify`, `<board>.speedyapply`, and `<board>.speedyapply_ai`
+objects (missing file or missing board key → treat as `{}`) and pass each as
+`--since-json`, still with a `--days` fallback bound (14) for any
+category/section with no marker yet (new board, or a category that surfaced
+nothing last run):
 
 ```bash
 SIMPLIFY_SINCE=$(python3 -c "import json;print(json.dumps(json.load(open('knowledge/job_scan_state.json')).get('<board>',{}).get('simplify',{})))" 2>/dev/null || echo '{}')
 SPEEDY_SINCE=$(python3 -c "import json;print(json.dumps(json.load(open('knowledge/job_scan_state.json')).get('<board>',{}).get('speedyapply',{})))" 2>/dev/null || echo '{}')
+SPEEDY_AI_SINCE=$(python3 -c "import json;print(json.dumps(json.load(open('knowledge/job_scan_state.json')).get('<board>',{}).get('speedyapply_ai',{})))" 2>/dev/null || echo '{}')
 
 python3 scripts/parse_simplify_jobs.py <scratchpad>/simplify.md \
   --categories <active flags> --days 14 --since-json "$SIMPLIFY_SINCE" > <scratchpad>/s.json &
 python3 scripts/parse_speedyapply_jobs.py <scratchpad>/speedyapply.md \
-  --categories <same> --days 14 --since-json "$SPEEDY_SINCE" > <scratchpad>/p.json &
+  --categories <same> --days 14 --since-json "$SPEEDY_SINCE" \
+  --source-name speedyapply --default-category swe > <scratchpad>/p.json &
+python3 scripts/parse_speedyapply_jobs.py <scratchpad>/speedyapply_ai.md \
+  --categories <same> --days 14 --since-json "$SPEEDY_AI_SINCE" \
+  --source-name speedyapply_ai --default-category dsa > <scratchpad>/pai.json &
 wait
 ```
 
 `--since-json` for simplify is keyed by **category** (its sections are
-literally per-category headings). For speedyapply it's keyed by **section**
-(`faang`/`quant`/`other`) — that source's three tables each mix categories
-and are independently newest-first, so the stop boundary has to be the table,
-not the category; see the parser's own docstring/comments before changing
-this.
+literally per-category headings). For each speedyapply-format board it's
+keyed by **section** (`faang`/`quant`/`other`) — that source's three tables
+each mix categories and are independently newest-first, so the stop boundary
+has to be the table, not the category; see the parser's own
+docstring/comments before changing this. The SWE and AI boards' markers are
+tracked as two separate state keys (`speedyapply` / `speedyapply_ai`) since
+they're two distinct, independent tables — never merge them into one.
 
 Then, either mode:
 
 ```bash
 python3 scripts/merge_and_filter_jobs.py --simplify <scratchpad>/s.json \
-  [--speedyapply <scratchpad>/p.json] \
+  [--speedyapply <scratchpad>/p.json] [--speedyapply-ai <scratchpad>/pai.json] \
   --archive "<the 'Output archive' subfolder for this board from rules.md>"
 ```
 
 `merge_and_filter_jobs.py` does the cross-source dedupe and the
 already-applied filtering deterministically — don't re-derive either in
 prose. It emits `entries` plus `scanned`, `scanned_simplify`,
-`scanned_speedyapply`, `closed_excluded`, `cross_source_dropped`, and
-`already_applied_dropped`. Read those numbers straight through to Steps 5–7.
+`scanned_speedyapply`, `scanned_speedyapply_ai`, `closed_excluded`,
+`cross_source_dropped`, and `already_applied_dropped`. Read those numbers
+straight through to Steps 5–7.
 
 Each entry has `category`, `company`, `role`, `location`, `age_raw`,
-`salary` (speedyapply FAANG+/Quant rows only, else `null`), `apply_url`,
-`source`, and the booleans `faang`/`adv_degree`/`no_sponsor`/`us_citizen`.
-Closed postings and anything outside the day window are already gone. Known
-source gaps, not bugs: speedyapply has no closed marker (`closed_excluded` is
-0 for it) and no adv_degree/no_sponsor/us_citizen signal (always `false`).
+`salary` (speedyapply-format FAANG+/Quant rows only, else `null`),
+`apply_url`, `source`, and the booleans
+`faang`/`adv_degree`/`no_sponsor`/`us_citizen`. Closed postings and anything
+outside the day window are already gone. Known source gaps, not bugs: both
+speedyapply-format boards have no closed marker (`closed_excluded` is 0 for
+them) and no no_sponsor/us_citizen signal (always `false`).
+
+**`adv_degree` on a speedyapply-format entry is a much weaker signal than
+Simplify's.** Simplify's flag comes from the board's hand-curated 🎓 marker;
+speedyapply boards carry no such marker, so `parse_speedyapply_jobs.py` can
+only regex the role *title* for an explicit "PhD"/"Doctorate"/"Postdoc"
+mention (e.g. TikTok's "... - 2027 Start - PhD" suffix). A JD that requires
+a PhD without saying so in the title — verified live: Iambic Therapeutics,
+Applied Intuition, Lila Sciences, Flow Traders, and Axon all required a PhD
+with zero title signal — still comes through as `adv_degree: false` and
+Step 2.6 never checks its JD, since that step only runs on `adv_degree:
+true` rows. **Do not treat an unhatted speedyapply-format row as
+degree-verified.** The real backstop for this source is
+`acting-on-results.md`'s per-posting eligibility check at dispatch time,
+which reads the actual JD before tailoring — that check is mandatory and is
+what actually protects the user here, not this flag.
 
 An entry may carry **`applied_note`** — the company has a recent archived
 resume but the role couldn't be confirmed as the same posting. Keep it in the
 table and append that note to its Note column. Surfacing beats silently
 hiding a possibly-different opening.
 
+```bash
+python3 scripts/run_timer.py mark job-scan parse_merge
+```
+
 ## Step 2.4 — Persist scan state
 
-After `s.json` (and `p.json`, if run) exist, update the marker file so a
-future `--since-last-scan` run knows where this one left off — regardless of
-which recency mode *this* run used:
+After `s.json` (and `p.json`/`pai.json`, if run) exist, update the marker
+file so a future `--since-last-scan` run knows where this one left off —
+regardless of which recency mode *this* run used:
 
 ```bash
 python3 scripts/update_scan_state.py --board <new-grad|internship> \
   --simplify <scratchpad>/s.json [--speedyapply <scratchpad>/p.json] \
+  [--speedyapply-ai <scratchpad>/pai.json] \
   --state-file knowledge/job_scan_state.json
 ```
 
@@ -200,6 +263,10 @@ compare-offer posting with no stated salary) is only fetched once.
 A failed fetch is not fatal to either downstream check — `ok: false` in the
 manifest means "keep the posting, mark it unverified," exactly as each step
 already specifies.
+
+```bash
+python3 scripts/run_timer.py mark job-scan fetch_jds
+```
 
 ## Step 2.6 — Verify advanced-degree (🎓) postings
 
@@ -292,6 +359,10 @@ Classify each posting:
 drop — one extra table row costs far less than hiding a good option. Never
 invent a comp or level; label any levels.fyi figure as an estimate.
 
+```bash
+python3 scripts/run_timer.py mark job-scan compare_offer
+```
+
 ## Step 4 — Render
 
 Always one lean markdown table with every surfaced posting — never
@@ -348,7 +419,8 @@ uncapped.
 - Closed postings excluded, cross-source duplicates dropped, and
   already-applied entries dropped — each only if nonzero. Don't pad the
   report with zero-count lines.
-- If the speedyapply fetch failed, say so — the scan ran, just Simplify-only.
+- If either speedyapply fetch failed, say so and name which board (SWE or
+  AI) — the scan ran, just without that source.
 - If comparison was requested but `current_offer.md` is missing, remind here.
 - If any posting was dropped as a clear step down, give a one-line count
   ("3 postings excluded as a clear step down on comp/level/tier") — never
@@ -365,16 +437,33 @@ fork-out. Don't improvise it from memory.
 
 ## Step 7 — Log metrics
 
+First close out the run timer (started in Step 1) — its JSON has
+`duration_s` and a `steps` breakdown (`fetch_boards`, `parse_merge`,
+`fetch_jds`, `compare_offer` — whichever marks actually ran this time):
+
+```bash
+python3 scripts/run_timer.py finish job-scan
+```
+
+Fold its output straight into the `steps`/`duration_s` fields below — don't
+recompute timing by hand. `fetch_speedup` is `serial_estimate_s / elapsed_s`
+from Step 1's and Step 2.5's `fetch_urls.py` manifests (both now report
+`elapsed_s`, `concurrency`, and `serial_estimate_s`); omit it if a fetch
+manifest is unavailable rather than estimating it.
+
 ```bash
 python3 scripts/log_metric.py job_scan '{
   "board": "<new-grad|internship>", "categories": ["swe", ...],
   "recency": "<since-last-scan|days>", "days": <N, or the 14 fallback bound>,
   "scanned": <N>, "scanned_simplify": <N>, "scanned_speedyapply": <N or omit>,
+  "scanned_speedyapply_ai": <N or omit>,
   "closed_excluded": <N>, "cross_source_dropped": <N or omit if 0>,
   "already_applied_dropped": <N>, "surfaced": <final count>,
   "compare_offer_used": <true|false>,
   "better_count": <N or omit>, "comparable_count": <N or omit>,
-  "worth_a_skim_count": <N or omit>, "dropped_worse_count": <N or omit>
+  "worth_a_skim_count": <N or omit>, "dropped_worse_count": <N or omit>,
+  "duration_s": <from run_timer finish>, "steps": <from run_timer finish>,
+  "fetch_speedup": <N or omit>
 }'
 ```
 

@@ -171,11 +171,13 @@ don't pass as a flag is asked as an interactive checklist instead — bare
 
 - Sources: Simplify Jobs' community-maintained GitHub boards
   (`SimplifyJobs/New-Grad-Positions`, `SimplifyJobs/Summer2027-Internships`).
-  New Grad runs also merge `speedyapply/2027-SWE-College-Jobs`, a second
-  live source with many postings Simplify's board doesn't carry; the two are
-  cross-source deduped (same company/role collapsed to one row) before
-  filtering. speedyapply isn't wired in for internship runs. If the
-  speedyapply fetch fails, the scan still runs on Simplify alone and says so.
+  New Grad runs also merge two speedyapply live sources —
+  `speedyapply/2027-SWE-College-Jobs` and `speedyapply/2027-AI-College-Jobs`
+  (AI/ML + quant-focused, e.g. GTS, Man Group, Flow Traders) — each carrying
+  many postings the other two don't. All three are cross-source deduped
+  (same company/role collapsed to one row) before filtering. Neither
+  speedyapply board is wired in for internship runs. If a speedyapply fetch
+  fails, the scan still runs on whatever sources succeeded and says so.
 - Categories are Simplify's own: `swe` (Software Engineering), `pm`
   (Product Management), `dsa` (Data Science, AI & Machine Learning), `quant`
   (Quantitative Finance) are the default set; `hw` (Hardware Engineering) is

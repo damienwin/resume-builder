@@ -8,7 +8,7 @@ Run: python3 scripts/test_parse_speedyapply_jobs.py
 """
 import unittest
 
-from parse_speedyapply_jobs import classify_category, parse
+from parse_speedyapply_jobs import ADV_DEGREE_TITLE_RE, classify_category, parse
 
 SECTION_START = {
     "faang": "<!-- TABLE_FAANG_START -->",
@@ -74,8 +74,64 @@ class ClassifyCategoryTests(unittest.TestCase):
     def test_defaults_to_swe(self):
         self.assertEqual(classify_category("faang", "Backend Software Engineer"), "swe")
 
+    def test_default_category_override(self):
+        self.assertEqual(
+            classify_category("faang", "Backend Software Engineer", default_category="dsa"),
+            "dsa",
+        )
+
+    def test_analyst_role_classifies_other(self):
+        self.assertEqual(classify_category("other", "Data Analyst"), "other")
+        self.assertEqual(classify_category("other", "Management Consultant - AI Strategy"), "other")
+        self.assertEqual(classify_category("other", "AI Enablement Specialist"), "other")
+        self.assertEqual(classify_category("other", "GTM Data Analytics Engineer"), "other")
+
+    def test_quant_analyst_role_still_classifies_quant(self):
+        # A real quant role must not be caught by the analyst-family filter
+        # just because its title also contains "Analyst".
+        self.assertEqual(
+            classify_category("other", "Quantitative Risk Management - Summer Analyst"),
+            "quant",
+        )
+
+    def test_product_operations_classifies_pm(self):
+        # Live false negative: "Product Operations - AI Revenue Systems" (Ramp)
+        # matched no keyword and fell through to swe, despite being a PM/ops
+        # role with a 1-3 years product experience requirement, not SWE.
+        self.assertEqual(classify_category("other", "Product Operations - AI Revenue Systems"), "pm")
+
+
+class AdvDegreeTitleRegexTests(unittest.TestCase):
+    def test_phd_suffix_matches(self):
+        self.assertTrue(ADV_DEGREE_TITLE_RE.search("ML Engineer Graduate - 2027 Start - PhD"))
+
+    def test_ph_dot_d_matches(self):
+        self.assertTrue(ADV_DEGREE_TITLE_RE.search("Research Scientist, Ph.D."))
+
+    def test_postdoc_matches(self):
+        self.assertTrue(ADV_DEGREE_TITLE_RE.search("Postdoctoral Research Associate"))
+
+    def test_plain_title_does_not_match(self):
+        # This is the known false-negative case: a title with no degree
+        # wording gives no signal even when the JD itself requires a PhD
+        # (verified live for Iambic, Applied Intuition, Lila Sciences, Flow
+        # Traders, Axon) - Step 2.6 / acting-on-results.md's JD-level check
+        # is what actually has to catch those, not this regex.
+        self.assertIsNone(ADV_DEGREE_TITLE_RE.search("Research Scientist - Humanoid Robotics"))
+
 
 class SectionParsingTests(unittest.TestCase):
+    def test_adv_degree_true_when_title_names_phd(self):
+        text = md({"other": [row("Acme", "ML Engineer Graduate - 2027 Start - PhD")]})
+        result = parse(text, {"swe"}, max_days=7)
+        self.assertTrue(result["entries"][0]["adv_degree"])
+
+    def test_adv_degree_false_when_title_has_no_degree_wording(self):
+        # Known false negative - see AdvDegreeTitleRegexTests.
+        text = md({"other": [row("Acme", "Research Scientist - Humanoid Robotics")]})
+        result = parse(text, {"dsa"}, max_days=7)
+        self.assertFalse(result["entries"][0]["adv_degree"])
+
     def test_faang_rows_carry_salary(self):
         text = md({"faang": [row("Acme", "Software Engineer New Grad", salary="$150k/yr")]})
         result = parse(text, {"swe"}, max_days=7)
@@ -119,6 +175,32 @@ class SectionParsingTests(unittest.TestCase):
         text = md({"other": [row("Initech", "Software Engineer New Grad")]})
         result = parse(text, {"swe"}, max_days=7)
         self.assertEqual(result["closed_excluded"], 0)
+
+    def test_source_name_stamped_on_entries(self):
+        text = md({"other": [row("Initech", "Software Engineer New Grad")]})
+        result = parse(text, {"swe"}, max_days=7, source_name="speedyapply_ai")
+        self.assertEqual(result["entries"][0]["source"], "speedyapply_ai")
+
+    def test_default_source_name_is_speedyapply(self):
+        text = md({"other": [row("Initech", "Software Engineer New Grad")]})
+        result = parse(text, {"swe"}, max_days=7)
+        self.assertEqual(result["entries"][0]["source"], "speedyapply")
+
+    def test_default_category_flows_through_parse(self):
+        text = md({"other": [row("Initech", "Backend Engineer")]})
+        result = parse(text, {"dsa"}, max_days=7, default_category="dsa")
+        self.assertEqual(result["entries"][0]["category"], "dsa")
+
+    def test_analyst_family_rows_excluded_from_wanted_categories(self):
+        text = md({
+            "other": [
+                row("Initech", "Data Analyst", apply_url="https://a.com/1"),
+                row("Globex", "Software Engineer New Grad", apply_url="https://a.com/2"),
+            ],
+        })
+        result = parse(text, {"swe", "pm", "dsa", "quant", "hw"}, max_days=7)
+        companies = [e["company"] for e in result["entries"]]
+        self.assertEqual(companies, ["Globex"])
 
 
 class AgeCutoffTests(unittest.TestCase):

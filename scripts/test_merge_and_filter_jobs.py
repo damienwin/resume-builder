@@ -25,8 +25,8 @@ def days_ago(n):
     return datetime.datetime.now(tz=UTC) - datetime.timedelta(days=n)
 
 
-def entry(company, role, url=None, source="simplify"):
-    return {"company": company, "role": role, "apply_url": url, "source": source}
+def entry(company, role, url=None, source="simplify", salary=None):
+    return {"company": company, "role": role, "apply_url": url, "source": source, "salary": salary}
 
 
 class CanonicalUrlTests(unittest.TestCase):
@@ -142,6 +142,26 @@ class DedupeTests(unittest.TestCase):
         kept, dropped = dedupe_cross_source(entries)
         self.assertEqual(dropped, 0)
         self.assertEqual(len(kept), 2)
+
+    def test_salary_bearing_entry_wins_between_two_speedyapply_boards(self):
+        # Neither is "simplify", so the tie-break falls to whichever entry
+        # carries a stated salary.
+        entries = [
+            entry("Acme", "SWE New Grad", "https://x.com/j/1", "speedyapply", salary=None),
+            entry("Acme", "SWE New Grad", "https://x.com/j/1", "speedyapply_ai", salary="$150k/yr"),
+        ]
+        kept, dropped = dedupe_cross_source(entries)
+        self.assertEqual(dropped, 1)
+        self.assertEqual(kept[0]["source"], "speedyapply_ai")
+
+    def test_simplify_wins_over_salary_bearing_speedyapply_entry(self):
+        entries = [
+            entry("Acme", "SWE New Grad", "https://x.com/j/1", "speedyapply_ai", salary="$150k/yr"),
+            entry("Acme", "SWE New Grad", "https://x.com/j/1", "simplify", salary=None),
+        ]
+        kept, dropped = dedupe_cross_source(entries)
+        self.assertEqual(dropped, 1)
+        self.assertEqual(kept[0]["source"], "simplify")
 
     def test_distinct_roles_at_same_company_both_kept(self):
         entries = [

@@ -70,6 +70,31 @@ class FreshStateFileTests(unittest.TestCase):
             self.assertEqual(state["new-grad"]["simplify"], {"swe": "https://a.com/swe1"})
             self.assertEqual(state["new-grad"]["speedyapply"], {"other": "https://a.com/other1"})
 
+    def test_creates_state_file_with_all_three_sources(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            simplify_json = write_json(tmp, "simplify.json", {
+                "category_top": {"swe": "https://a.com/swe1"},
+            })
+            speedyapply_json = write_json(tmp, "speedyapply.json", {
+                "section_top": {"other": "https://a.com/other1"},
+            })
+            speedyapply_ai_json = write_json(tmp, "speedyapply_ai.json", {
+                "section_top": {"faang": "https://a.com/ai-faang1"},
+            })
+            state_file = os.path.join(tmp, "state.json")
+            result = run_update([
+                "--board", "new-grad", "--simplify", simplify_json,
+                "--speedyapply", speedyapply_json,
+                "--speedyapply-ai", speedyapply_ai_json,
+                "--state-file", state_file,
+            ])
+            self.assertEqual(result.returncode, 0, result.stderr)
+            with open(state_file) as f:
+                state = json.load(f)
+            self.assertEqual(state["new-grad"]["simplify"], {"swe": "https://a.com/swe1"})
+            self.assertEqual(state["new-grad"]["speedyapply"], {"other": "https://a.com/other1"})
+            self.assertEqual(state["new-grad"]["speedyapply_ai"], {"faang": "https://a.com/ai-faang1"})
+
     def test_creates_parent_directory_if_missing(self):
         with tempfile.TemporaryDirectory() as tmp:
             simplify_json = write_json(tmp, "simplify.json", {

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Merge the Simplify and speedyapply parser outputs, collapse cross-source
-duplicates, and drop postings whose company already has a recent tailored
-resume in the archive folder.
+"""Merge the Simplify and speedyapply(-format) parser outputs, collapse
+cross-source duplicates, and drop postings whose company already has a
+recent tailored resume in the archive folder.
 
 This is the deterministic half of the job-scan skill's Step 2 (cross-source
 dedupe and already-applied filtering).
@@ -13,11 +13,18 @@ prose on every scan.
 Usage:
     merge_and_filter_jobs.py --simplify <simplify.json> \
         [--speedyapply <speedyapply.json>] \
+        [--speedyapply-ai <speedyapply_ai.json>] \
         [--archive "<archive subfolder>"] [--applied-days 30] [--auto-drop-days 3]
+
+`--speedyapply` and `--speedyapply-ai` are two independent, distinctly-named
+sources (2027-SWE-College-Jobs and 2027-AI-College-Jobs respectively) — each
+parser run must be given a matching `--source-name` so dedupe treats them as
+different boards (see dedupe_cross_source's docstring: it only ever collapses
+entries from *different* `source` values).
 
 Output: JSON to stdout —
     {"entries": [...], "scanned": N, "scanned_simplify": N,
-     "scanned_speedyapply": N, "closed_excluded": N,
+     "scanned_speedyapply": N, "scanned_speedyapply_ai": N, "closed_excluded": N,
      "cross_source_dropped": N, "already_applied_dropped": N}
 
 Entries keep every field the parsers emit. An entry whose company matches an
@@ -115,11 +122,18 @@ def roles_match(a, b):
 
 
 def dedupe_cross_source(entries):
-    """Collapse the same posting appearing on both boards, keeping Simplify's
-    entry (it carries the richer faang/adv_degree/no_sponsor/us_citizen flags).
+    """Collapse the same posting appearing on more than one board.
+
+    Simplify's entry always wins (it carries the richer faang/adv_degree/
+    no_sponsor/us_citizen flags). Failing that, an entry with a `salary`
+    populated wins over one without — this only matters between the two
+    speedyapply-format boards, since Simplify never carries salary and would
+    already have won above.
     """
-    # Simplify first so it always wins a duplicate pair regardless of input order.
-    ordered = sorted(entries, key=lambda e: 0 if e.get("source") == "simplify" else 1)
+    ordered = sorted(
+        entries,
+        key=lambda e: (0 if e.get("source") == "simplify" else 1, 0 if e.get("salary") else 1),
+    )
     kept = []
     seen_urls = {}
     dropped = 0
@@ -294,7 +308,14 @@ def load(path):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--simplify", required=True, help="parse_simplify_jobs.py JSON output")
-    ap.add_argument("--speedyapply", help="parse_speedyapply_jobs.py JSON output (New Grad only)")
+    ap.add_argument(
+        "--speedyapply",
+        help="parse_speedyapply_jobs.py JSON output for 2027-SWE-College-Jobs (New Grad only)",
+    )
+    ap.add_argument(
+        "--speedyapply-ai",
+        help="parse_speedyapply_jobs.py JSON output for 2027-AI-College-Jobs (New Grad only)",
+    )
     ap.add_argument("--archive", help="archive subfolder of tailored resumes")
     ap.add_argument(
         "--metrics",
@@ -311,12 +332,20 @@ def main():
     closed_excluded = simplify["closed_excluded"]
 
     scanned_speedyapply = None
+    scanned_speedyapply_ai = None
     cross_source_dropped = 0
+    any_other_source = bool(args.speedyapply or args.speedyapply_ai)
     if args.speedyapply:
         speedy = load(args.speedyapply)
         entries += speedy["entries"]
         scanned_speedyapply = speedy["scanned"]
         closed_excluded += speedy.get("closed_excluded", 0)
+    if args.speedyapply_ai:
+        speedy_ai = load(args.speedyapply_ai)
+        entries += speedy_ai["entries"]
+        scanned_speedyapply_ai = speedy_ai["scanned"]
+        closed_excluded += speedy_ai.get("closed_excluded", 0)
+    if any_other_source:
         entries, cross_source_dropped = dedupe_cross_source(entries)
 
     entries, already_applied_dropped = filter_already_applied(
@@ -328,7 +357,7 @@ def main():
 
     result = {
         "entries": entries,
-        "scanned": scanned_simplify + (scanned_speedyapply or 0),
+        "scanned": scanned_simplify + (scanned_speedyapply or 0) + (scanned_speedyapply_ai or 0),
         "scanned_simplify": scanned_simplify,
         "closed_excluded": closed_excluded,
         "cross_source_dropped": cross_source_dropped,
@@ -336,6 +365,8 @@ def main():
     }
     if scanned_speedyapply is not None:
         result["scanned_speedyapply"] = scanned_speedyapply
+    if scanned_speedyapply_ai is not None:
+        result["scanned_speedyapply_ai"] = scanned_speedyapply_ai
 
     json.dump(result, sys.stdout, indent=2)
     print()
