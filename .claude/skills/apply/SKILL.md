@@ -12,6 +12,12 @@ with that exact PDF.
 
 ## Step 1 — Tailor for this posting
 
+Start the run timer (fire-and-forget, folded into Step 5's log):
+
+```bash
+python3 scripts/run_timer.py start apply
+```
+
 Run the **tailor-resume** skill (`.claude/skills/tailor-resume/SKILL.md`) on
 the given job URL / JD file / pasted text, exactly as `/tailor` would —
 including its ATS-safety pass, one-page check, and the archive step from
@@ -20,6 +26,10 @@ Nguyen.pdf`). Do not skip tailoring even if `build/resume.pdf` looks recent —
 it may have been tailored for a different company. Only skip if the user
 explicitly confirms the current build was tailored for **this** posting in
 this session.
+
+```bash
+python3 scripts/run_timer.py mark apply tailor
+```
 
 ## Step 2 — Point the autofill store at the archived PDF
 
@@ -49,6 +59,14 @@ fields, confirm the uploaded resume filename, and leave Submit to the user.
 
 ## Step 5 — Log metrics
 
+First mark the fill step and close out the run timer — its output has
+`duration_s` and a `steps` breakdown (`tailor`, `fill`):
+
+```bash
+python3 scripts/run_timer.py mark apply fill
+python3 scripts/run_timer.py finish apply
+```
+
 Log this run for future reference (see `scripts/log_metric.py`), after
 Step 4's summary — never before, since `status` depends on how filling
 actually went:
@@ -60,7 +78,8 @@ python3 scripts/log_metric.py job_apply_e2e '{
   "job_url": "<posting URL>",
   "resume_path": "<archived PDF path used>",
   "ats_platform": "<linkedin|greenhouse|ashby|lever|rippling|workday|other>",
-  "status": "<filled_pending_submit|filled_with_gaps|failed>"
+  "status": "<filled_pending_submit|filled_with_gaps|failed>",
+  "duration_s": <from run_timer finish>, "steps": <from run_timer finish>
 }'
 ```
 

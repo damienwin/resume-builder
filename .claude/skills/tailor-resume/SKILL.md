@@ -15,6 +15,12 @@ step serves one of those two audiences.
 
 ## Step 1 — Ingest the JD
 
+Start the run timer (fire-and-forget, folded into Step 9's log):
+
+```bash
+python3 scripts/run_timer.py start tailor-resume
+```
+
 URL → `WebFetch`. File path → read it. Pasted text → save to `jd.txt` first.
 
 If the fetch fails (JS-rendered page, login wall, empty response), ask the
@@ -37,6 +43,10 @@ one Read per file — never sequentially): `profile.md`, `education.md`,
 Frontmatter is structured metadata; the body is ground truth. **Seed bullets
 are pre-polished — prefer adapting them over inventing new wording.**
 
+```bash
+python3 scripts/run_timer.py mark tailor-resume read_knowledge
+```
+
 ## Step 3 — Score and select
 
 Rank every experience, research entry, and project against the JD using
@@ -54,6 +64,10 @@ Rank every experience, research entry, and project against the JD using
 - **~10–14 languages and ~10–14 frameworks/tools** the JD signals, spelled
   the way the JD spells them. Never dump the master list.
 - **4–6 coursework items** from `education.md` aligned to the JD.
+
+```bash
+python3 scripts/run_timer.py mark tailor-resume select
+```
 
 ## Step 4 — Tailor bullets
 
@@ -101,6 +115,10 @@ invent an unsupported signal.
 
 **Never hallucinate.** If the JD wants something `knowledge/` doesn't
 support, leave it out and report it as a gap in Step 8.
+
+```bash
+python3 scripts/run_timer.py mark tailor-resume write_bullets
+```
 
 ## Step 5 — Render
 
@@ -195,6 +213,10 @@ re-verify on any failure.
 
 Compilation errors → read the output, fix the `.tex`, recompile.
 
+```bash
+python3 scripts/run_timer.py mark tailor-resume compile
+```
+
 ## Step 7 — Save
 
 `build/resume.pdf` and `build/resume.tex` stay as working files. If
@@ -219,6 +241,13 @@ verified PDF there. If the destination is ambiguous, ask once.
 
 ## Step 9 — Log metrics
 
+Close out the run timer first — its output has `duration_s` and a `steps`
+breakdown (`read_knowledge`, `select`, `write_bullets`, `compile`):
+
+```bash
+python3 scripts/run_timer.py finish tailor-resume
+```
+
 ```bash
 python3 scripts/log_metric.py resume_tailor '{
   "company": "<company>", "role": "<role title>",
@@ -226,7 +255,8 @@ python3 scripts/log_metric.py resume_tailor '{
   "output_path": "<archived PDF path, else build/resume.pdf>",
   "experiences_included": ["<name>", ...],
   "projects_included": ["<name>", ...],
-  "required_keywords_total": <N>, "required_keywords_covered": <N>
+  "required_keywords_total": <N>, "required_keywords_covered": <N>,
+  "duration_s": <from run_timer finish>, "steps": <from run_timer finish>
 }'
 ```
 

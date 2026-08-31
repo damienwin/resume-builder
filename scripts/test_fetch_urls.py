@@ -89,6 +89,37 @@ class FetchAllTests(unittest.TestCase):
             self.assertTrue(all(r["ok"] for r in manifest["results"]))
             self.assertTrue((Path(tmp) / "a.html").exists())
 
+    def test_manifest_carries_timing_fields(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            entries = [("https://a.com", "a.html"), ("https://b.com", "b.html")]
+            fetcher = self._fake_fetcher({"https://a.com": 200, "https://b.com": 200})
+            manifest = fetch_all(entries, Path(tmp), concurrency=4, timeout=5,
+                                  user_agent="ua", strip_tags_flag=False, fetcher=fetcher)
+            self.assertIn("elapsed_s", manifest)
+            self.assertIn("serial_estimate_s", manifest)
+            self.assertEqual(manifest["concurrency"], 4)
+            self.assertGreaterEqual(manifest["elapsed_s"], 0)
+            for r in manifest["results"]:
+                self.assertIn("elapsed_s", r)
+                self.assertGreaterEqual(r["elapsed_s"], 0)
+
+    def test_serial_estimate_is_sum_of_per_result_elapsed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            entries = [("https://a.com", "a.html"), ("https://b.com", "b.html")]
+            fetcher = self._fake_fetcher({"https://a.com": 200, "https://b.com": 200})
+            manifest = fetch_all(entries, Path(tmp), concurrency=4, timeout=5,
+                                  user_agent="ua", strip_tags_flag=False, fetcher=fetcher)
+            expected = round(sum(r["elapsed_s"] for r in manifest["results"]), 3)
+            self.assertAlmostEqual(manifest["serial_estimate_s"], expected)
+
+    def test_concurrency_floor_of_one_even_when_requested_lower(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            entries = [("https://a.com", "a.html")]
+            fetcher = self._fake_fetcher({"https://a.com": 200})
+            manifest = fetch_all(entries, Path(tmp), concurrency=0, timeout=5,
+                                  user_agent="ua", strip_tags_flag=False, fetcher=fetcher)
+            self.assertEqual(manifest["concurrency"], 1)
+
     def test_one_failure_does_not_sink_batch(self):
         with tempfile.TemporaryDirectory() as tmp:
             entries = [("https://a.com", "a.html"), ("https://bad.com", "b.html")]

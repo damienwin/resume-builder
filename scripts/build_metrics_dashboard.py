@@ -18,6 +18,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 METRICS_PATH = REPO_ROOT / "knowledge" / "metrics.jsonl"
+RUNS_PATH = REPO_ROOT / "knowledge" / "runs.jsonl"
 TEMPLATE_PATH = REPO_ROOT / "knowledge" / "dashboard_template.html"
 OUTPUT_PATH = REPO_ROOT / "knowledge" / "dashboard.html"
 
@@ -35,6 +36,22 @@ def load_records():
                 records.append(json.loads(line))
     records.sort(key=lambda r: r.get("timestamp", ""))
     return records
+
+
+def load_runs():
+    """knowledge/runs.jsonl — the metrics.jsonl anchors joined against Claude
+    Code transcript turns by scripts/build_run_metrics.py. Absent on a fresh
+    clone or before that script has been run; treated as "no perf data yet",
+    not an error."""
+    if not RUNS_PATH.exists():
+        return []
+    runs = []
+    with RUNS_PATH.open() as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                runs.append(json.loads(line))
+    return runs
 
 
 def week_start(dt):
@@ -139,14 +156,97 @@ def build_totals(records):
     }
 
 
+def _percentile(values, q):
+    values = sorted(values)
+    idx = min(len(values) - 1, int(len(values) * q))
+    return values[idx]
+
+
+def build_performance(runs):
+    """Latency, token, and cost aggregates for the dashboard's performance
+    panels. Returns has_data: false (rather than raising) when runs.jsonl
+    doesn't exist yet or nothing in it has token coverage — a fresh clone or
+    a repo that hasn't run build_run_metrics.py must still render."""
+    costed = [r for r in runs if r.get("cost_usd") is not None]
+    timed = [r for r in runs if r.get("duration_s") is not None]
+    hit_rates = [r["cache_hit_rate"] for r in runs if r.get("cache_hit_rate") is not None]
+    scan_durations = [r["duration_s"] for r in timed if r["skill"] == "job-scan"]
+    tailor_runs = [r for r in costed if r["skill"] == "tailor-resume"]
+
+    if not timed:
+        return {"has_data": False}
+
+    cost_to_date = sum(r["cost_usd"] for r in costed)
+    cost_per_resume = (sum(r["cost_usd"] for r in tailor_runs) / len(tailor_runs)) if tailor_runs else None
+
+    by_skill_latency = defaultdict(list)
+    by_skill_tokens = defaultdict(lambda: defaultdict(int))
+    for r in timed:
+        by_skill_latency[r["skill"]].append(r["duration_s"])
+    for r in runs:
+        tokens = r.get("tokens")
+        if not tokens:
+            continue
+        bucket = by_skill_tokens[r["skill"]]
+        for key in ("input", "output", "cache_write", "cache_read"):
+            bucket[key] += tokens.get(key, 0)
+
+    latency = [
+        {
+            "skill": skill,
+            "runs": len(durations),
+            "p50_s": round(_percentile(durations, 0.5), 1),
+            "p95_s": round(_percentile(durations, 0.95), 1),
+        }
+        for skill, durations in sorted(by_skill_latency.items(), key=lambda kv: -len(kv[1]))
+    ]
+
+    # job-scan runs also carry a scan_type ("new-grad:swe+dsa") — break those
+    # out separately so "SWE new-grad scans" and "quant internship scans"
+    # don't get averaged together into one job-scan number.
+    by_scan_type = defaultdict(list)
+    for r in timed:
+        if r.get("scan_type"):
+            by_scan_type[r["scan_type"]].append(r["duration_s"])
+    scan_breakdown = [
+        {
+            "scan_type": scan_type,
+            "runs": len(durations),
+            "p50_s": round(_percentile(durations, 0.5), 1),
+            "p95_s": round(_percentile(durations, 0.95), 1),
+        }
+        for scan_type, durations in sorted(by_scan_type.items(), key=lambda kv: -len(kv[1]))
+    ]
+
+    token_mix = [
+        {"skill": skill, **counts}
+        for skill, counts in sorted(by_skill_tokens.items(), key=lambda kv: -sum(kv[1].values()))
+    ]
+
+    return {
+        "has_data": True,
+        "cost_to_date_usd": round(cost_to_date, 2),
+        "cost_per_resume_usd": round(cost_per_resume, 2) if cost_per_resume is not None else None,
+        "cache_hit_rate": round(sum(hit_rates) / len(hit_rates), 3) if hit_rates else None,
+        "median_scan_latency_s": round(_percentile(scan_durations, 0.5), 1) if scan_durations else None,
+        "latency": latency,
+        "token_mix": token_mix,
+        "scan_breakdown": scan_breakdown,
+        "covered_runs": len([r for r in runs if r.get("tokens") is not None]),
+        "total_runs": len(runs),
+    }
+
+
 def main():
     records = load_records()
+    runs = load_runs()
     data = {
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "record_count": len(records),
         "totals": build_totals(records),
         "weekly": build_weekly_series(records),
         "recent": format_recent(records),
+        "performance": build_performance(runs),
     }
 
     if not TEMPLATE_PATH.exists():

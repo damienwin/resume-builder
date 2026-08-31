@@ -317,12 +317,20 @@ resume-builder/
 ├── templates/jakes_resume.tex     # parameterized LaTeX template
 ├── scripts/
 │   ├── parse_simplify_jobs.py      # HTML-table parser used by /job-scan
-│   ├── parse_speedyapply_jobs.py   # second-source parser (New Grad runs)
+│   ├── parse_speedyapply_jobs.py   # speedyapply-format parser, shared by both New Grad speedyapply sources
 │   ├── merge_and_filter_jobs.py    # cross-source dedupe + already-applied filter
 │   ├── test_merge_and_filter_jobs.py
 │   ├── fetch_urls.py               # concurrent URL fetcher used by /job-scan and /ats-score
 │   ├── test_fetch_urls.py
-│   └── log_metric.py               # appends run records to knowledge/metrics.jsonl
+│   ├── log_metric.py               # appends run records to knowledge/metrics.jsonl
+│   ├── run_timer.py                # coarse step timing bridged across a skill's tool calls
+│   ├── test_run_timer.py
+│   ├── cc_transcripts.py           # reads Claude Code's own transcripts for tokens/model/cost
+│   ├── test_cc_transcripts.py
+│   ├── build_run_metrics.py        # joins metrics.jsonl + transcripts -> knowledge/runs.jsonl
+│   ├── test_build_run_metrics.py
+│   ├── metrics_summary.py          # CLI report; --perf and --ab for latency/token/cost stats
+│   └── build_metrics_dashboard.py  # renders knowledge/dashboard.html from runs.jsonl
 ├── build/                           # generated, gitignored
 ├── tools/hiring-agent/              # cloned by /ats-score on first run, gitignored
 ├── eval/                            # /ats-score output cache, gitignored

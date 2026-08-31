@@ -6,8 +6,14 @@ Usage:
 
 Example:
     python3 scripts/log_metric.py job_scan '{"board": "new-grad", "surfaced": 20}'
+
+Set RESUME_BUILDER_VARIANT in the environment to tag every record written in
+that shell with a "variant" field, for A/B comparisons (see
+scripts/metrics_summary.py --ab). An explicit "variant" key in the fields
+JSON always wins over the environment variable.
 """
 import json
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -31,8 +37,11 @@ def main():
     record = {
         "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "event": event_type,
-        **fields,
     }
+    env_variant = os.environ.get("RESUME_BUILDER_VARIANT")
+    if env_variant:
+        record["variant"] = env_variant
+    record.update(fields)  # an explicit "variant" field in fields wins
 
     repo_root = Path(__file__).resolve().parent.parent
     metrics_path = repo_root / "knowledge" / "metrics.jsonl"

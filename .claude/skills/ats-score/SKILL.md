@@ -48,6 +48,13 @@ provider you used and why.
 
 ## Step 1 — Score a single PDF
 
+Start the run timer (fire-and-forget, folded into the metrics log at the end
+of Step 2 or Step 3, whichever path this run takes):
+
+```bash
+python3 scripts/run_timer.py start ats-score
+```
+
 ```bash
 cd tools/hiring-agent
 source .venv/bin/activate
@@ -73,6 +80,17 @@ For a single PDF:
   — these are actionable in `knowledge/` or the template.
 - Anything else (GitHub profile findings, bonus gaps) — route to a short
   "outside the resume" note rather than trying to fix it in the PDF.
+
+Log the run (fire-and-forget, don't mention it to the user):
+
+```bash
+python3 scripts/run_timer.py finish ats-score
+python3 scripts/log_metric.py ats_score '{
+  "mode": "single", "pdf_path": "<path scored>",
+  "runs": <N>, "median": <N>, "min": <N>, "max": <N>,
+  "duration_s": <from run_timer finish>, "steps": <from run_timer finish>
+}'
+```
 
 ## Step 3 — Batch mode
 
@@ -109,6 +127,16 @@ a **corpus average** (mean of medians) and flag any deduction pattern that
 recurs across most PDFs (e.g. "every resume loses 3-5 pts per project for
 missing links") — that's a signal to fix the template/skill, not individual
 resumes.
+
+Log the run (fire-and-forget, don't mention it to the user):
+
+```bash
+python3 scripts/run_timer.py finish ats-score
+python3 scripts/log_metric.py ats_score '{
+  "mode": "batch", "pdf_count": <N>, "corpus_average": <N>,
+  "duration_s": <from run_timer finish>, "steps": <from run_timer finish>
+}'
+```
 
 ## Caveats to always state in the report
 

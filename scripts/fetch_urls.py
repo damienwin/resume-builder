@@ -24,10 +24,17 @@ plain-text form the degree and salary checks actually read.
 A failed fetch (timeout, non-2xx, connection error) is never an exception —
 it's a manifest entry with "ok": false and an "error" string. One bad URL
 never sinks the batch. Output: JSON to stdout —
-    {"fetched": N, "failed": N, "results": [
-        {"url": ..., "path": ..., "status": 200, "ok": true, "bytes": N},
-        {"url": ..., "status": 403, "ok": false, "error": "HTTP 403"}
+    {"fetched": N, "failed": N, "elapsed_s": W, "concurrency": C,
+     "serial_estimate_s": S, "results": [
+        {"url": ..., "path": ..., "status": 200, "ok": true, "bytes": N, "elapsed_s": E},
+        {"url": ..., "status": 403, "ok": false, "error": "HTTP 403", "elapsed_s": E}
     ]}
+
+elapsed_s (top-level) is the actual wall-clock time for the whole batch;
+serial_estimate_s is the sum of each result's own elapsed_s — i.e. how long
+the batch would have taken one URL at a time. serial_estimate_s / elapsed_s
+is the measured speedup from --concurrency, computed from the run rather
+than assumed.
 """
 from __future__ import annotations
 
@@ -36,6 +43,7 @@ import hashlib
 import json
 import re
 import sys
+import time
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
@@ -97,6 +105,7 @@ def fetch_one(url: str, explicit_name: str | None, out_dir: Path, timeout: float
     (url, timeout, user_agent) and return (status, content_type, body_bytes),
     or raise."""
     result = {"url": url}
+    started = time.monotonic()
     try:
         if fetcher is not None:
             status, content_type, body = fetcher(url, timeout, user_agent)
@@ -124,6 +133,7 @@ def fetch_one(url: str, explicit_name: str | None, out_dir: Path, timeout: float
             result["error"] = f"HTTP {status}"
     except Exception as e:  # noqa: BLE001 - any fetch failure is data, not a crash
         result.update({"ok": False, "error": str(e)})
+    result["elapsed_s"] = round(time.monotonic() - started, 3)
     return result
 
 
@@ -139,6 +149,7 @@ def _http_get(url: str, timeout: float, user_agent: str):
 def fetch_all(entries: list[tuple[str, str | None]], out_dir: Path, concurrency: int,
               timeout: float, user_agent: str, strip_tags_flag: bool, fetcher=None) -> dict:
     out_dir.mkdir(parents=True, exist_ok=True)
+    batch_started = time.monotonic()
     results = []
     with ThreadPoolExecutor(max_workers=max(1, concurrency)) as pool:
         futures = [
@@ -147,9 +158,18 @@ def fetch_all(entries: list[tuple[str, str | None]], out_dir: Path, concurrency:
         ]
         for fut in futures:
             results.append(fut.result())
+    elapsed_s = round(time.monotonic() - batch_started, 3)
 
     fetched = sum(1 for r in results if r.get("ok"))
-    return {"fetched": fetched, "failed": len(results) - fetched, "results": results}
+    serial_estimate_s = round(sum(r.get("elapsed_s", 0) for r in results), 3)
+    return {
+        "fetched": fetched,
+        "failed": len(results) - fetched,
+        "elapsed_s": elapsed_s,
+        "concurrency": max(1, concurrency),
+        "serial_estimate_s": serial_estimate_s,
+        "results": results,
+    }
 
 
 def main():

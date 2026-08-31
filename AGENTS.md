@@ -44,7 +44,14 @@ These hold everywhere and are the ones worth stating outside a skill:
 - `templates/jakes_resume.tex` — parameterized template; every
   `<<PLACEHOLDER>>` gets filled from `knowledge/`.
 - `scripts/` — board parsers, the merge/already-applied filter (with tests),
-  and `log_metric.py`.
+  and the metrics pipeline: `log_metric.py` (append-only event log),
+  `cc_transcripts.py` (reads Claude Code's own session transcripts for
+  per-turn tokens/model/cost, cached incrementally), `build_run_metrics.py`
+  (joins the two into `knowledge/runs.jsonl` — latency, tokens, cost, cache
+  hit rate per run), `run_timer.py` (coarse step timing bridged across a
+  skill's separate tool calls via a scratch file), `metrics_summary.py`
+  (`--perf`/`--ab` CLI reports), and `build_metrics_dashboard.py` (renders
+  `knowledge/dashboard.html`, now with latency/cost/token-mix panels).
 - `build/`, `eval/`, `jd.txt` — generated/scratch, gitignored.
 - `tools/hiring-agent/` — third-party clone of HackerRank's open-source ATS,
   used only by `ats-score`. Gitignored, not vendored.
