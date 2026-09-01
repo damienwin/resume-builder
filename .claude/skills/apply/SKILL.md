@@ -22,10 +22,11 @@ Run the **tailor-resume** skill (`.claude/skills/tailor-resume/SKILL.md`) on
 the given job URL / JD file / pasted text, exactly as `/tailor` would —
 including its ATS-safety pass, one-page check, and the archive step from
 `knowledge/rules.md` (copy to `~/Desktop/Tailored Resumes/<Tag> Damien
-Nguyen.pdf`). Do not skip tailoring even if `build/resume.pdf` looks recent —
-it may have been tailored for a different company. Only skip if the user
-explicitly confirms the current build was tailored for **this** posting in
-this session.
+Nguyen.pdf`). That skill names its working files `build/<slug>.*` per job —
+do not reintroduce a shared `build/resume.pdf`. Do not skip tailoring even if
+some build looks recent; it may have been tailored for a different company.
+Only skip if the user explicitly confirms the current build was tailored for
+**this** posting in this session.
 
 ```bash
 python3 scripts/run_timer.py mark apply tailor
@@ -33,9 +34,10 @@ python3 scripts/run_timer.py mark apply tailor
 
 ## Step 2 — Point the autofill store at the archived PDF
 
-Use the **archived** copy (stable path), not `build/resume.pdf` (overwritten
-by the next tailor). Update `resumePath` through the plugin helper only
-(locate it as in `.claude/skills/app-profile-sync/SKILL.md` Step 0):
+Use the **archived** copy (stable path), not a `build/` working file (the
+next tailor run for the same job overwrites it). Update `resumePath` through
+the plugin helper only (locate it as in `.claude/skills/app-profile-sync/SKILL.md`
+Step 0):
 
 ```bash
 python3 "$STORE" profile-get   # read current profile
@@ -45,12 +47,51 @@ python3 "$STORE" profile-replace --input <temp-profile.json>
 
 Never edit `~/.job-apply/` files directly.
 
+**`resumePath` is a single global field, and Claude in Chrome uploads one
+file at a time.** Parallel apply runs (job-scan Step 6 fans out one fork per
+posting) share both, so a fork that sets `resumePath` early and uploads late
+will upload whatever the *other* fork wrote in between. Last writer wins, so
+the losing fork attaches the wrong company's resume to a real application,
+with nothing in the UI flagging it.
+
+Treat set-then-upload as one critical section, and hold a lock across it:
+
+```bash
+LOCK=~/.job-apply/.resumepath.lock
+for i in $(seq 1 60); do                       # bounded: ~3 min, never forever
+  mkdir "$LOCK" 2>/dev/null && break
+  # Break a lock leaked by a fork that died mid-upload. No real upload takes
+  # 5 minutes, so an older lock has no live owner.
+  if [ -d "$LOCK" ] && [ -n "$(find "$LOCK" -maxdepth 0 -mmin +5)" ]; then
+    rmdir "$LOCK" 2>/dev/null
+  fi
+  sleep 3
+done
+[ -d "$LOCK" ] || { echo "could not acquire resumePath lock"; exit 1; }
+trap 'rmdir "$LOCK" 2>/dev/null' EXIT
+```
+
+The retry is **bounded and self-healing on purpose.** `trap ... EXIT` fires
+only for the shell that set it, so a killed fork, an interrupted session, or
+a crashed tool call all leave the directory behind. A plain
+`until mkdir ...; do sleep 3; done` then never exits against a leaked lock,
+wedging every later apply run in every session until someone removes the
+directory by hand. Fail loudly instead of hanging.
+
+Take the lock immediately before the `profile-replace` above, and release it
+only after Step 3's upload has been verified. Do the slow work — tailoring,
+opening the tab, filling every other field — *outside* the lock, so the
+serialized window is just write → upload → verify.
+
 ## Step 3 — Fill the application
 
 Run the `job-apply` plugin's fill flow (`/job-apply:job-apply <job URL>`,
-Claude in Chrome extension) for the posting. When it reaches the resume
-upload, verify the selected filename is the archived tailored PDF from
-Step 1 — if it isn't, stop and fix before continuing.
+Claude in Chrome extension) for the posting. Reach the resume upload with the
+Step 2 lock still held, and verify the attached filename is this posting's
+archived tailored PDF from Step 1 — read it back off the form, not from your
+own expectation. If it isn't, stop and fix before continuing. Release the
+lock (`rmdir "$LOCK"`) once the filename is confirmed; the rest of the form
+needs no lock.
 
 ## Step 4 — Stop at final review
 

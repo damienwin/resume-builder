@@ -96,7 +96,11 @@ asking the user for pasted JD text.
 **c. If the action is "tailor + apply"**, run the `apply` skill
 (`.claude/skills/apply/SKILL.md`) for that URL exactly as `/apply <url>`
 would — it already handles pointing the store at the archived PDF and filling
-the form. Open its **own** new tab via `tabs_create_mcp`; never touch a tab
+the form. Two of its details exist specifically because of this parallel
+fan-out and must not be skipped: per-job `build/<slug>.*` working files, and
+the lock held across the `resumePath` write and the resume upload (that field
+is global and Chrome uploads one file at a time, so an unlocked fork can
+attach another posting's resume). Open its **own** new tab via `tabs_create_mcp`; never touch a tab
 another fork or the main conversation is using. Leave ambiguous or subjective
 screening questions (self-reported years of experience, "select up to N"
 checklists with no true match) for the user rather than guessing, unless

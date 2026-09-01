@@ -129,8 +129,32 @@ python3 scripts/run_timer.py mark tailor-resume write_bullets
 
 ## Step 5 — Render
 
+**Pick a per-job slug first.** Every working file in this run is named
+`build/<slug>.*` — never the shared `build/resume.tex`/`build/resume.pdf`.
+The slug is the archive tag from `rules.md`'s "Output archive", lowercased
+and hyphenated (`Acme Resume` -> `acme-resume`, `Globex Resume` ->
+`globex-resume`), so the working file and the archived PDF are traceable to
+each other:
+
+```bash
+SLUG=<company-role slug>      # e.g. whatnot-resume
+```
+
+This is not a cosmetic naming preference. Two tailor runs in parallel
+(job-scan's Step 6 fans out one fork per posting, by design) both write the
+same fixed path otherwise, and the second one silently overwrites the
+first's `.tex` mid-compile. A fixed filename makes concurrent
+tailoring unsafe; a per-job one makes it free.
+
+Compile in `build/`, not in the archive folder. The archive doubles as
+job-scan's already-applied ledger (`merge_and_filter_jobs.py` matches
+company names against the filenames there), so a failed or 2-page compile
+landing in it would make the next scan silently drop that company — and
+tectonic would leave `.log`/`.aux` siblings beside the PDF. The archive
+receives exactly one thing: a PDF that already passed Step 6.
+
 Read `templates/jakes_resume.tex` and fill every `<<PLACEHOLDER>>` into
-`build/resume.tex`:
+`build/$SLUG.tex`:
 
 - Header (name, email, github, linkedin, **website**) from `profile.md` —
   the `\hypersetup` PDF metadata block also takes the name. `<<WEBSITE>>` is
@@ -180,16 +204,16 @@ Read `templates/jakes_resume.tex` and fill every `<<PLACEHOLDER>>` into
 ## Step 6 — Compile and verify (one pass)
 
 ```bash
-tectonic build/resume.tex 2>&1 | tee /tmp/tectonic.log | tail -20
-pdfinfo build/resume.pdf | grep Pages    # must be exactly 1
-pdftotext -layout build/resume.pdf -     # extraction check
-pdftotext build/resume.pdf -             # reading-order check
-grep -i "overfull" /tmp/tectonic.log     # heading-row overflow check
+tectonic build/$SLUG.tex 2>&1 | tee build/$SLUG.tectonic.log | tail -20
+pdfinfo build/$SLUG.pdf | grep Pages     # must be exactly 1
+pdftotext -layout build/$SLUG.pdf -      # extraction check
+pdftotext build/$SLUG.pdf -              # reading-order check
+grep -i "overfull" build/$SLUG.tectonic.log   # heading-row overflow check
 ```
 
 (Tectonic pulls packages on demand. Missing tools: `brew install tectonic`,
 `brew install poppler`. On macOS `mdls -name kMDItemNumberOfPages
-build/resume.pdf` also gives page count.)
+build/$SLUG.pdf` also gives page count.)
 
 Check all seven against the extracted text; fix the `.tex`, recompile, and
 re-verify on any failure.
@@ -198,7 +222,7 @@ re-verify on any failure.
    it:
 
    ```bash
-   pdftotext -bbox build/resume.pdf - | grep -o 'yMax="[0-9.]*"' \
+   pdftotext -bbox build/$SLUG.pdf - | grep -o 'yMax="[0-9.]*"' \
      | sed 's/[^0-9.]//g' | sort -n | tail -1
    ```
 
@@ -236,8 +260,8 @@ re-verify on any failure.
 7. **Header complete, no unfilled placeholders.**
 
    ```bash
-   grep -c '<<' build/resume.tex                        # must be 0
-   pdftotext build/resume.pdf - | head -4 | grep -c .   # header lines present
+   grep -c '<<' build/$SLUG.tex                         # must be 0
+   pdftotext build/$SLUG.pdf - | head -4 | grep -c .    # header lines present
    ```
 
    Any surviving `<<PLACEHOLDER>>` is a failed check. Confirm the header
@@ -252,9 +276,14 @@ python3 scripts/run_timer.py mark tailor-resume compile
 
 ## Step 7 — Save
 
-`build/resume.pdf` and `build/resume.tex` stay as working files. If
+`build/$SLUG.pdf` and `build/$SLUG.tex` stay as working files. If
 `rules.md` defines an archive location and naming convention, copy the
-verified PDF there. If the destination is ambiguous, ask once.
+verified PDF there — **only after every Step 6 check passed.** If the
+destination is ambiguous, ask once.
+
+Copy, never compile in place, and never archive an unverified PDF: the
+archive folder is what job-scan reads to decide a company was already
+applied to, so a bad file there costs a real posting on a later scan.
 
 ## Step 8 — Report
 
@@ -285,7 +314,7 @@ python3 scripts/run_timer.py finish tailor-resume
 python3 scripts/log_metric.py resume_tailor '{
   "company": "<company>", "role": "<role title>",
   "jd_source": "<url, file path, or \"pasted\">",
-  "output_path": "<archived PDF path, else build/resume.pdf>",
+  "output_path": "<archived PDF path, else build/$SLUG.pdf>",
   "experiences_included": ["<name>", ...],
   "projects_included": ["<name>", ...],
   "required_keywords_total": <N>, "required_keywords_covered": <N>,

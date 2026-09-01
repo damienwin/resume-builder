@@ -98,12 +98,32 @@ python3 scripts/fetch_urls.py --urls-file <scratchpad>/board_urls.txt \
   --out-dir <scratchpad> --concurrency 4 > <scratchpad>/board_fetch.json
 ```
 
+**Always fetch `raw.githubusercontent.com`, never a `github.com/.../blob/...`
+URL:**
+
+```
+https://raw.githubusercontent.com/<org>/<repo>/<ref>/<file>
+```
+
+The blob URL returns GitHub's JS file viewer, whose rendered HTML is not what
+either parser reads — `parse_simplify_jobs.py` wants the README's raw `<tr>`
+rows and `parse_speedyapply_jobs.py` wants the raw `<!-- TABLE_*_START -->`
+markers and pipe tables. A blob URL can return HTTP 200 with a large body
+and **zero** parseable rows, which is the exact silent "0 postings" false
+negative this step exists to prevent, since `ok: true` and a healthy byte
+count both look fine. Blob URLs are also rate-limited far more aggressively
+(HTTP 429 abuse-detection pages) and wrap a small file in megabytes of page
+chrome. Raw URLs avoid all three and are substantially faster.
+
 Never `WebFetch` for these — WebFetch summarizes through a small model and
 destroys the table structure the parsers need. Save to the scratchpad, never
-into the repo. Read `board_fetch.json`'s `results` to judge each file below
-(`ok: true` and the file contains `<table` is success).
+into the repo. Read `board_fetch.json`'s `results` to judge each file below.
+Success is `ok: true` **plus the marker that board's parser actually needs** —
+`<tr>` for Simplify, `TABLE_` for either speedyapply board. Do not check for
+`<table`: a blob-viewer page can contain that string while carrying no
+parseable rows at all.
 
-- **Simplify fetch fails** (`ok: false`, empty file, or no `<table` in it):
+- **Simplify fetch fails** (`ok: false`, empty file, or no `<tr>` rows in it):
   stop and say the scan couldn't run, and why. Do NOT report "0 postings" —
   that reads as "nothing new" when the truth is "couldn't check."
 - **A speedyapply fetch fails** (either board, New Grad only): not fatal.
