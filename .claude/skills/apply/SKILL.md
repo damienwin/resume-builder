@@ -12,10 +12,18 @@ with that exact PDF.
 
 ## Step 1 — Tailor for this posting
 
-Start the run timer (fire-and-forget, folded into Step 5's log):
+**Set `$SLUG` now and pass it as `--scope` on every `run_timer.py` call in
+this run** — the same per-job slug the `tailor-resume` skill uses for
+`build/$SLUG.*`. This skill runs as one fork per posting in
+`job-scan/references/acting-on-results.md`'s parallel dispatch, and
+concurrent forks were observed sharing one `CLAUDE_CODE_SESSION_ID` — see
+`run_timer.py`'s docstring. Without `--scope`, one fork's `start` clobbers
+another's shared timer file, and every fork after the first `finish` gets
+`{}` back instead of real timing.
 
 ```bash
-python3 scripts/run_timer.py start apply
+SLUG=<company-role-slug>
+python3 scripts/run_timer.py start apply --scope "$SLUG"
 ```
 
 Run the **tailor-resume** skill (`.claude/skills/tailor-resume/SKILL.md`) on
@@ -29,7 +37,7 @@ Only skip if the user explicitly confirms the current build was tailored for
 **this** posting in this session.
 
 ```bash
-python3 scripts/run_timer.py mark apply tailor
+python3 scripts/run_timer.py mark apply tailor --scope "$SLUG"
 ```
 
 ## Step 2 — Point the autofill store at the archived PDF
@@ -104,8 +112,8 @@ First mark the fill step and close out the run timer — its output has
 `duration_s` and a `steps` breakdown (`tailor`, `fill`):
 
 ```bash
-python3 scripts/run_timer.py mark apply fill
-python3 scripts/run_timer.py finish apply
+python3 scripts/run_timer.py mark apply fill --scope "$SLUG"
+python3 scripts/run_timer.py finish apply --scope "$SLUG"
 ```
 
 Log this run for future reference (see `scripts/log_metric.py`), after

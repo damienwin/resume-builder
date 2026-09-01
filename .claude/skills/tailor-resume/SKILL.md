@@ -15,16 +15,51 @@ step serves one of those two audiences.
 
 ## Step 1 — Ingest the JD
 
-Start the run timer (fire-and-forget, folded into Step 9's log):
+**Set `$SLUG` now, before starting the timer** — the same per-job slug
+Step 5 uses for `build/$SLUG.*` (lowercase, hyphenated
+`<company>-<role-first-two-words>`, e.g. `whatnot-resume`; refine it in Step
+5 once the exact company/role are locked in, but keep it stable for the
+rest of this run rather than re-deriving it). Pass it as every
+`run_timer.py` call's `--scope` for the rest of this run:
 
 ```bash
-python3 scripts/run_timer.py start tailor-resume
+SLUG=<company-role-slug>
+python3 scripts/run_timer.py start tailor-resume --scope "$SLUG"
 ```
 
-URL → `WebFetch`. File path → read it. Pasted text → save to `jd.txt` first.
+**Why this matters even for a single tailoring run:** when this posting was
+dispatched as one of a parallel fork batch (see
+`job-scan/references/acting-on-results.md` Step 4), concurrent forks of this
+same skill were observed sharing one `CLAUDE_CODE_SESSION_ID` — see
+`run_timer.py`'s docstring. Without a distinct `--scope` per fork, one
+fork's `start` clobbers another's, and whichever fork's `finish` runs first
+deletes the shared file, so every other fork's `resume_tailor` metric ships
+with no `duration_s`/`steps` at all (observed live 2026-09-01: 6 parallel
+forks, only the first `finish` got real numbers).
 
-If the fetch fails (JS-rendered page, login wall, empty response), ask the
-user to paste the JD or put it in `jd.txt`. **Never proceed on a guessed JD.**
+URL → `WebFetch` first. If the page is JS-rendered and comes back as nav
+chrome or an empty body (common on Workday, Greenhouse behind a JS shell,
+and Oracle Cloud/Fusion `*.oraclecloud.com/hcmUI/CandidateExperience/...`
+career pages), try, in order, before asking the user for pasted text:
+1. **Workday**: the `wday/cxs/<tenant>/<site>/job/...` JSON API.
+2. A `.md`/markdown alternate link some ATS platforms expose in the page
+   `<head>`.
+3. **Oracle Cloud / Fusion HCM CandidateExperience** pages (URL contains
+   `hcmUI/CandidateExperience`): fetch the JSON directly —
+   `https://<host>/hcmRestApi/resources/latest/recruitingCEJobRequisitionDetails?finder=ById;Id="<jobId>",siteNumber="<siteNumber>"`
+   (`jobId` and `siteNumber` both appear in the page URL, e.g.
+   `.../sites/CX_1/job/26013253/` → `siteNumber=CX_1`, `jobId=26013253`).
+   Verified live 2026-09-01 against American Express's careers site — plain
+   `WebFetch`/`--strip-tags` returned only a truncated `og:description`, the
+   REST endpoint returned the full requisition text.
+4. `python3 scripts/fetch_urls.py --urls-file <file> --out-dir <dir>
+   --strip-tags` with a browser User-Agent, which recovers many
+   JS-rendered pages plain `WebFetch` can't.
+
+File path → read it. Pasted text → save to `jd.txt` first.
+
+If every fallback fails, ask the user to paste the JD or put it in
+`jd.txt`. **Never proceed on a guessed JD.**
 
 Extract and keep for Step 6's coverage check:
 - **Required** skills/languages/frameworks, as exact strings — ATS matchers
@@ -44,7 +79,7 @@ Frontmatter is structured metadata; the body is ground truth. **Seed bullets
 are pre-polished — prefer adapting them over inventing new wording.**
 
 ```bash
-python3 scripts/run_timer.py mark tailor-resume read_knowledge
+python3 scripts/run_timer.py mark tailor-resume read_knowledge --scope "$SLUG"
 ```
 
 ## Step 3 — Score and select
@@ -73,7 +108,7 @@ Rank every experience, research entry, and project against the JD using
 - **4–6 coursework items** from `education.md` aligned to the JD.
 
 ```bash
-python3 scripts/run_timer.py mark tailor-resume select
+python3 scripts/run_timer.py mark tailor-resume select --scope "$SLUG"
 ```
 
 ## Step 4 — Tailor bullets
@@ -124,17 +159,20 @@ invent an unsupported signal.
 support, leave it out and report it as a gap in Step 8.
 
 ```bash
-python3 scripts/run_timer.py mark tailor-resume write_bullets
+python3 scripts/run_timer.py mark tailor-resume write_bullets --scope "$SLUG"
 ```
 
 ## Step 5 — Render
 
-**Pick a per-job slug first.** Every working file in this run is named
-`build/<slug>.*` — never the shared `build/resume.tex`/`build/resume.pdf`.
-The slug is the archive tag from `rules.md`'s "Output archive", lowercased
-and hyphenated (`Acme Resume` -> `acme-resume`, `Globex Resume` ->
-`globex-resume`), so the working file and the archived PDF are traceable to
-each other:
+**`$SLUG` was already set in Step 1** for the run timer; this is where it
+earns its keep as the working-file name too. Every working file in this run
+is named `build/<slug>.*` — never the shared
+`build/resume.tex`/`build/resume.pdf`. If the provisional value from Step 1
+doesn't match the archive tag from `rules.md`'s "Output archive" now that
+company/role are locked in, reassign it here (lowercased and hyphenated:
+`Acme Resume` -> `acme-resume`, `Globex Resume` -> `globex-resume`) — just
+keep using the same variable so the working file and the archived PDF stay
+traceable to each other:
 
 ```bash
 SLUG=<company-role slug>      # e.g. whatnot-resume
@@ -205,21 +243,43 @@ Read `templates/jakes_resume.tex` and fill every `<<PLACEHOLDER>>` into
 
 ```bash
 tectonic build/$SLUG.tex 2>&1 | tee build/$SLUG.tectonic.log | tail -20
-pdfinfo build/$SLUG.pdf | grep Pages     # must be exactly 1
-pdftotext -layout build/$SLUG.pdf -      # extraction check
-pdftotext build/$SLUG.pdf -              # reading-order check
-grep -i "overfull" build/$SLUG.tectonic.log   # heading-row overflow check
+python3 scripts/verify_resume_pdf.py build/$SLUG.tex build/$SLUG.pdf \
+  --log build/$SLUG.tectonic.log
 ```
 
 (Tectonic pulls packages on demand. Missing tools: `brew install tectonic`,
-`brew install poppler`. On macOS `mdls -name kMDItemNumberOfPages
-build/$SLUG.pdf` also gives page count.)
+`brew install poppler`.)
 
-Check all seven against the extracted text; fix the `.tex`, recompile, and
-re-verify on any failure.
+**`verify_resume_pdf.py` exists because page count alone is not proof of
+completeness.** Observed live 2026-09-01 (Idler tailoring run): an
+over-full document pushed an entire project past the bottom of the page
+*without* triggering a page break — `pdfinfo` reported exactly 1 page,
+every check below would have passed by eyeballing the extraction, and a
+whole project was simply absent from the rendered PDF. It was caught only
+by hand-diffing the `.tex` against `pdftotext` output. The script automates
+that diff: it parses every `\resumeSubheading`/`\resumeProjectHeading`
+title and every `\resumeItem` bullet out of the `.tex` and confirms each
+one actually appears in the extracted PDF text — not just "page count is
+1." Treat a `completeness` failure exactly like a compile error: something
+that should be on the page isn't, full stop.
 
-1. **Exactly one page, and visually full.** Measure the fill — don't eyeball
-   it:
+It also automates checks 1, 6, and 7 below (page count, fill measurement,
+overfull-hbox, placeholders, header) plus the new completeness check above.
+Exit code nonzero means at least one check failed — read its per-check
+output (or `--json` for a machine-readable report), fix the `.tex`,
+recompile, and rerun it. It does **not** cover checks 2, 3, 4, or 5 —
+clean extraction, reading order, keyword coverage, and link visibility all
+need a truthful read of the actual JD and the extracted text, which is
+exactly the judgment a script can't make. `mdls -name kMDItemNumberOfPages
+build/$SLUG.pdf` still works as a spot-check on macOS if you want a second
+page-count source.
+
+Check all eight below against the extracted text and the script's report;
+fix the `.tex`, recompile, and re-verify on any failure.
+
+1. **Exactly one page, and visually full.** (Automated above — `page_count`
+   and `fill`.) Measure the fill by hand only if you need to debug a
+   failure — don't eyeball it:
 
    ```bash
    pdftotext -bbox build/$SLUG.pdf - | grep -o 'yMax="[0-9.]*"' \
@@ -254,10 +314,11 @@ re-verify on any failure.
    and unbroken — not hyphen-split across a wrap, not glued to neighboring
    text. If it wraps, is missing, or collides, shorten the title/tech-stack
    (never the URL) per Step 5 and recompile.
-6. **No overfull-hbox warnings** on any `\resumeSubheading` or
-   `\resumeProjectHeading` line. This is the Step 5 overflow bug, not
-   cosmetic noise.
-7. **Header complete, no unfilled placeholders.**
+6. **No overfull-hbox warnings** (automated above — `overfull`) on any
+   `\resumeSubheading` or `\resumeProjectHeading` line. This is the Step 5
+   overflow bug, not cosmetic noise.
+7. **Header complete, no unfilled placeholders.** (Automated above —
+   `placeholders` and `header`.)
 
    ```bash
    grep -c '<<' build/$SLUG.tex                         # must be 0
@@ -267,11 +328,19 @@ re-verify on any failure.
    Any surviving `<<PLACEHOLDER>>` is a failed check. Confirm the header
    carries email, github, linkedin, and the website from `profile.md` —
    the website is the one that gets dropped most often.
+8. **Completeness — every heading and bullet in the `.tex` actually renders.**
+   (Automated above — `completeness`.) This is the check that exists
+   because of the 2026-09-01 Idler incident: a passing page count and a
+   passing fill measurement are both compatible with an entire project
+   having silently fallen off the page. Never treat a `completeness`
+   failure as a false positive without first confirming, by eye, that the
+   named heading/bullet text is genuinely present in `pdftotext`'s output —
+   it isn't one.
 
 Compilation errors → read the output, fix the `.tex`, recompile.
 
 ```bash
-python3 scripts/run_timer.py mark tailor-resume compile
+python3 scripts/run_timer.py mark tailor-resume compile --scope "$SLUG"
 ```
 
 ## Step 7 — Save
@@ -307,7 +376,7 @@ Close out the run timer first — its output has `duration_s` and a `steps`
 breakdown (`read_knowledge`, `select`, `write_bullets`, `compile`):
 
 ```bash
-python3 scripts/run_timer.py finish tailor-resume
+python3 scripts/run_timer.py finish tailor-resume --scope "$SLUG"
 ```
 
 ```bash
