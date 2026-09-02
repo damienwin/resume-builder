@@ -12,18 +12,23 @@ with that exact PDF.
 
 ## Step 1 — Tailor for this posting
 
-**Set `$SLUG` now and pass it as `--scope` on every `run_timer.py` call in
-this run** — the same per-job slug the `tailor-resume` skill uses for
-`build/$SLUG.*`. This skill runs as one fork per posting in
+**Set `$SLUG` now** — the same per-job slug the `tailor-resume` skill uses
+for `build/$SLUG.*`. Separately, **set `$RUN_ID` now and pass it as
+`--scope` on every `run_timer.py` call in this run** — never `$SLUG`, and
+never reassign it once set. This skill runs as one fork per posting in
 `job-scan/references/acting-on-results.md`'s parallel dispatch, and
 concurrent forks were observed sharing one `CLAUDE_CODE_SESSION_ID` — see
-`run_timer.py`'s docstring. Without `--scope`, one fork's `start` clobbers
-another's shared timer file, and every fork after the first `finish` gets
-`{}` back instead of real timing.
+`run_timer.py`'s docstring. Without a distinct `--scope` per fork, one
+fork's `start` clobbers another's shared timer file, and every fork after
+the first `finish` gets `{}` back instead of real timing. `$SLUG` is not
+distinct enough on its own for this — two postings can slugify to the same
+value (e.g. two "Software Engineer" roles at the same company) and
+reproduce that exact collision — so use a random token instead:
 
 ```bash
 SLUG=<company-role-slug>
-python3 scripts/run_timer.py start apply --scope "$SLUG"
+RUN_ID=$(python3 -c "import uuid; print(uuid.uuid4().hex[:10])")
+python3 scripts/run_timer.py start apply --scope "$RUN_ID"
 ```
 
 Run the **tailor-resume** skill (`.claude/skills/tailor-resume/SKILL.md`) on
@@ -37,7 +42,7 @@ Only skip if the user explicitly confirms the current build was tailored for
 **this** posting in this session.
 
 ```bash
-python3 scripts/run_timer.py mark apply tailor --scope "$SLUG"
+python3 scripts/run_timer.py mark apply tailor --scope "$RUN_ID"
 ```
 
 ## Step 2 — Point the autofill store at the archived PDF
@@ -112,8 +117,8 @@ First mark the fill step and close out the run timer — its output has
 `duration_s` and a `steps` breakdown (`tailor`, `fill`):
 
 ```bash
-python3 scripts/run_timer.py mark apply fill --scope "$SLUG"
-python3 scripts/run_timer.py finish apply --scope "$SLUG"
+python3 scripts/run_timer.py mark apply fill --scope "$RUN_ID"
+python3 scripts/run_timer.py finish apply --scope "$RUN_ID"
 ```
 
 Log this run for future reference (see `scripts/log_metric.py`), after

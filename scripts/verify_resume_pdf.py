@@ -140,23 +140,25 @@ def _balanced_arg(s: str, i: int) -> str:
     return ""
 
 
-def bullet_present(bullet: str, text: str) -> bool:
-    """Is this bullet rendered? Tolerant of line-wrap and hyphenation.
+def bullet_present(snippet: str, text: str) -> bool:
+    """Is this title/bullet rendered? Tolerant of line-wrap and hyphenation.
 
-    A bullet can legitimately wrap across lines, so an exact substring test
-    over normalized text is right for most, but long bullets may also be
-    hyphen-split. Fall back to requiring a long, distinctive head of the
-    bullet plus its tail, which a truncated/absent bullet cannot satisfy.
+    Declared text can legitimately wrap across lines, so an exact substring
+    test over normalized text is right for most, but long titles/bullets may
+    also be hyphen-split. Fall back to requiring a long, distinctive head of
+    the snippet plus its tail, which a truncated/absent one cannot satisfy.
+    Used for both title and bullet checks — a project heading with a long
+    tech-stack list wraps and hyphenates exactly like a bullet does.
     """
-    if bullet in text:
+    if snippet in text:
         return True
-    squashed_bullet = bullet.replace(" ", "").replace("-", "")
+    squashed_snippet = snippet.replace(" ", "").replace("-", "")
     squashed_text = text.replace(" ", "").replace("-", "")
-    if squashed_bullet in squashed_text:
+    if squashed_snippet in squashed_text:
         return True
-    # partial render (fell off the page mid-bullet) must still fail
-    head = squashed_bullet[:60]
-    tail = squashed_bullet[-40:]
+    # partial render (fell off the page mid-snippet) must still fail
+    head = squashed_snippet[:60]
+    tail = squashed_snippet[-40:]
     return bool(head) and head in squashed_text and tail in squashed_text
 
 
@@ -181,7 +183,16 @@ def page_count(pdf: Path) -> int | None:
 def verify(tex_path: Path, pdf_path: Path, log_path: Path | None,
            min_fill: float) -> dict:
     tex = tex_path.read_text(encoding="utf-8", errors="replace")
-    raw_text = _run(["pdftotext", str(pdf_path), "-"])
+    try:
+        raw_text = _run(["pdftotext", str(pdf_path), "-"])
+    except (subprocess.CalledProcessError, FileNotFoundError) as e:
+        return {
+            "ok": False,
+            "tex": str(tex_path),
+            "pdf": str(pdf_path),
+            "checks": [{"check": "extraction", "ok": False,
+                        "detail": f"pdftotext failed: {e}"}],
+        }
     text = normalize(raw_text)
 
     checks: list[dict] = []
@@ -193,7 +204,7 @@ def verify(tex_path: Path, pdf_path: Path, log_path: Path | None,
     add("page_count", pages == 1, f"{pages} page(s)" if pages else "unreadable")
 
     titles, bullets = declared_content(tex)
-    missing_titles = [t for t in titles if t not in text]
+    missing_titles = [t for t in titles if not bullet_present(t, text)]
     missing_bullets = [b for b in bullets if not bullet_present(b, text)]
     missing = missing_titles + missing_bullets
     add(

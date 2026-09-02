@@ -31,11 +31,17 @@ first fork to `finish` unlinked it, and the later forks' `finish` returned
 at all. Whichever forks did get a number got someone else's `t0`.
 
 So any skill that can run in a parallel fork MUST pass a `--scope` token
-unique to its unit of work. `tailor-resume` and `apply` pass the per-job
-slug, the same token that already namespaces their `build/<slug>.*` working
-files; that slug is unique per posting, which is exactly the granularity a
-fan-out runs at. `job-scan` and `ats-score` run once in the main
-conversation and can omit it.
+unique to its unit of work, generated once and reused verbatim for every
+call in that run — never reassigned mid-run, since `start`/`mark`/`finish`
+must all resolve to the same path. `tailor-resume` and `apply` generate a
+random per-run token (`$RUN_ID`) for this rather than reusing their
+per-job `build/<slug>.*` filename slug: two distinct postings can slugify
+to the same value (e.g. two "Software Engineer" roles at one company),
+which would reproduce the same collision `--scope` exists to prevent. A
+random token doesn't collide that way, and staying independent of the
+build-file slug means renaming that slug mid-run (tailor-resume Step 5)
+can't orphan the timer. `job-scan` and `ats-score` run once in the main
+conversation and can omit `--scope` entirely.
 
 Falls back to skill-name-only scoping when neither `--scope` nor the env var
 is present (e.g. run outside Claude Code), which keeps single-run local

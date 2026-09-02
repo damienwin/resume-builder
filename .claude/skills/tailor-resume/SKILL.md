@@ -15,27 +15,37 @@ step serves one of those two audiences.
 
 ## Step 1 — Ingest the JD
 
-**Set `$SLUG` now, before starting the timer** — the same per-job slug
-Step 5 uses for `build/$SLUG.*` (lowercase, hyphenated
+**Set `$SLUG` and `$RUN_ID` now, before starting the timer.** `$SLUG` is the
+per-job slug Step 5 uses for `build/$SLUG.*` (lowercase, hyphenated
 `<company>-<role-first-two-words>`, e.g. `whatnot-resume`; refine it in Step
-5 once the exact company/role are locked in, but keep it stable for the
-rest of this run rather than re-deriving it). Pass it as every
-`run_timer.py` call's `--scope` for the rest of this run:
+5 once the exact company/role are locked in — see that step for why). `$RUN_ID`
+is a separate, random token that exists only to scope `run_timer.py` calls,
+and unlike `$SLUG` it must **never** be reassigned once set — reuse this
+exact value verbatim for every `run_timer.py --scope` call for the rest of
+this run, through Step 9:
 
 ```bash
 SLUG=<company-role-slug>
-python3 scripts/run_timer.py start tailor-resume --scope "$SLUG"
+RUN_ID=$(python3 -c "import uuid; print(uuid.uuid4().hex[:10])")
+python3 scripts/run_timer.py start tailor-resume --scope "$RUN_ID"
 ```
 
-**Why this matters even for a single tailoring run:** when this posting was
-dispatched as one of a parallel fork batch (see
-`job-scan/references/acting-on-results.md` Step 4), concurrent forks of this
-same skill were observed sharing one `CLAUDE_CODE_SESSION_ID` — see
-`run_timer.py`'s docstring. Without a distinct `--scope` per fork, one
-fork's `start` clobbers another's, and whichever fork's `finish` runs first
-deletes the shared file, so every other fork's `resume_tailor` metric ships
-with no `duration_s`/`steps` at all (observed live 2026-09-01: 6 parallel
-forks, only the first `finish` got real numbers).
+**Why `--scope` at all:** when this posting was dispatched as one of a
+parallel fork batch (see `job-scan/references/acting-on-results.md` Step 4),
+concurrent forks of this same skill were observed sharing one
+`CLAUDE_CODE_SESSION_ID` — see `run_timer.py`'s docstring. Without a
+distinct `--scope` per fork, one fork's `start` clobbers another's, and
+whichever fork's `finish` runs first deletes the shared file, so every other
+fork's `resume_tailor` metric ships with no `duration_s`/`steps` at all
+(observed live 2026-09-01: 6 parallel forks, only the first `finish` got
+real numbers).
+
+**Why `$RUN_ID` and not `$SLUG`, for the scope:** two distinct postings can
+still slugify to the same `$SLUG` (e.g. two "Software Engineer" roles at the
+same company), which would silently reproduce the exact collision above. A
+random token can't collide that way. It also can't be reassigned by
+accident the way `$SLUG` is in Step 5 — see that step for what breaks if the
+scope token changes mid-run.
 
 URL → `WebFetch` first. If the page is JS-rendered and comes back as nav
 chrome or an empty body (common on Workday, Greenhouse behind a JS shell,
@@ -79,7 +89,7 @@ Frontmatter is structured metadata; the body is ground truth. **Seed bullets
 are pre-polished — prefer adapting them over inventing new wording.**
 
 ```bash
-python3 scripts/run_timer.py mark tailor-resume read_knowledge --scope "$SLUG"
+python3 scripts/run_timer.py mark tailor-resume read_knowledge --scope "$RUN_ID"
 ```
 
 ## Step 3 — Score and select
@@ -108,7 +118,7 @@ Rank every experience, research entry, and project against the JD using
 - **4–6 coursework items** from `education.md` aligned to the JD.
 
 ```bash
-python3 scripts/run_timer.py mark tailor-resume select --scope "$SLUG"
+python3 scripts/run_timer.py mark tailor-resume select --scope "$RUN_ID"
 ```
 
 ## Step 4 — Tailor bullets
@@ -159,20 +169,22 @@ invent an unsupported signal.
 support, leave it out and report it as a gap in Step 8.
 
 ```bash
-python3 scripts/run_timer.py mark tailor-resume write_bullets --scope "$SLUG"
+python3 scripts/run_timer.py mark tailor-resume write_bullets --scope "$RUN_ID"
 ```
 
 ## Step 5 — Render
 
-**`$SLUG` was already set in Step 1** for the run timer; this is where it
-earns its keep as the working-file name too. Every working file in this run
-is named `build/<slug>.*` — never the shared
+**`$SLUG` was already set in Step 1** as the working-file name. Every
+working file in this run is named `build/<slug>.*` — never the shared
 `build/resume.tex`/`build/resume.pdf`. If the provisional value from Step 1
 doesn't match the archive tag from `rules.md`'s "Output archive" now that
 company/role are locked in, reassign it here (lowercased and hyphenated:
 `Acme Resume` -> `acme-resume`, `Globex Resume` -> `globex-resume`) — just
 keep using the same variable so the working file and the archived PDF stay
-traceable to each other:
+traceable to each other. **Reassigning `$SLUG` is safe and does not touch
+the timer** — `run_timer.py` calls use `$RUN_ID`, set once in Step 1 and
+never reassigned, precisely so renaming the build slug here can't orphan
+the run's `start` from its later `mark`/`finish` calls:
 
 ```bash
 SLUG=<company-role slug>      # e.g. whatnot-resume
@@ -340,7 +352,7 @@ fix the `.tex`, recompile, and re-verify on any failure.
 Compilation errors → read the output, fix the `.tex`, recompile.
 
 ```bash
-python3 scripts/run_timer.py mark tailor-resume compile --scope "$SLUG"
+python3 scripts/run_timer.py mark tailor-resume compile --scope "$RUN_ID"
 ```
 
 ## Step 7 — Save
@@ -376,7 +388,7 @@ Close out the run timer first — its output has `duration_s` and a `steps`
 breakdown (`read_knowledge`, `select`, `write_bullets`, `compile`):
 
 ```bash
-python3 scripts/run_timer.py finish tailor-resume --scope "$SLUG"
+python3 scripts/run_timer.py finish tailor-resume --scope "$RUN_ID"
 ```
 
 ```bash
