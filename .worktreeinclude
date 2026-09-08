@@ -1,0 +1,7 @@
+# Private, gitignored inputs required for local resume-tailoring workspaces.
+# Do not use cloud workspaces for tasks that need these files.
+knowledge/**
+tools/hiring-agent/.env
+eval/model_bakeoff/cases/**
+eval/model_bakeoff/prompts/**
+.env*

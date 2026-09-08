@@ -110,6 +110,37 @@ Output: `build/resume.pdf` (one page, Jake's Resume LaTeX format).
    math-mode symbols), checks required JD keywords actually appear in the
    extracted text, and verifies the result is exactly one page.
 
+## Review routing and subscriptions
+
+Evidence citations, numeric grounding, PDF verification, and layout checks
+always run locally at every stage. By default, the optional LLM
+semantic/readability review runs once on the completed resume rather than once
+for selection and again for bullets. This preserves the independent factuality
+check while avoiding duplicate review latency and token use.
+
+`scripts/review_routing.py` chooses a safe route without sending a model
+prompt: Claude + ChatGPT uses Claude Sonnet to write and Codex Luna to review;
+Claude-only and ChatGPT-only installations use a fresh isolated context from
+the available provider; no detected subscription requires human review. An
+early review is requested only for explicit risk signals (for example,
+skills-list evidence or repeated JD mappings). A failed deterministic audit
+always skips paid review and must be repaired first.
+
+Choose a mode with `--mode`: `auto` (default), `final-review`,
+`full-stage-review` (benchmark/debug), `deterministic-only`, or
+`human-review`. On a new clone the tool uses the locally installed `claude`
+and `codex` executables as availability hints; it never reads credentials. To
+make it explicit, create the gitignored `knowledge/review_routing.json`:
+
+```json
+{"claude": true, "chatgpt": false}
+```
+
+The routing decision, skips, reviewer telemetry, repair count, and final gate
+are append-only in `knowledge/review_routing_runs.jsonl`. A semantic failure
+or missing human sign-off blocks archival/delivery rather than silently
+falling back to an unreviewed resume.
+
 ## Adding a new experience / project
 
 Drop a new markdown file into the right folder:

@@ -1,0 +1,26 @@
+"$schema" = "https://conductor.build/schemas/settings.repo.schema.json"
+
+[scripts]
+setup = """
+command -v python3 >/dev/null || { echo 'python3 is required'; exit 1; }
+command -v tectonic >/dev/null || { echo 'tectonic is required; install it with: brew install tectonic'; exit 1; }
+command -v pdftotext >/dev/null || { echo 'pdftotext is required; install it with: brew install poppler'; exit 1; }
+mkdir -p build
+"""
+run_mode = "concurrent"
+
+[scripts.run.test]
+command = "python3 -m unittest discover -s scripts -p 'test_*.py'"
+default = true
+icon = "test-tube"
+available_in = [ "local" ]
+
+[scripts.run.metrics]
+command = "python3 scripts/metrics_summary.py --perf"
+icon = "chart-no-axes-combined"
+available_in = [ "local" ]
+
+[scripts.run.model-evals]
+command = "python3 scripts/model_eval.py report"
+icon = "chart-column"
+available_in = [ "local" ]
