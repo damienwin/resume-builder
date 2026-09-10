@@ -76,8 +76,8 @@ it. Do not fill any of these from inference.
 
 ## Step 1.3 — Ingest from projects on this machine
 
-Ask for a code directory to look in (their Codex project folders under
-`~/.Codex/projects/` encode real paths in their names, so offer those as
+Ask for a code directory to look in (their Claude Code project folders under
+`~/.claude/projects/` encode real paths in their names, so offer those as
 candidates). Then, per repo, read only what's actually there:
 
 ```bash
@@ -176,7 +176,7 @@ Rules for this nudge, all of them firm:
 
 ## Step 2 — Scan (and act)
 
-Run the **job-scan** skill (`.Codex/skills/job-scan/SKILL.md`) exactly as
+Run the **job-scan** skill (`.agents/skills/job-scan/SKILL.md`) exactly as
 `/job-scan` would, with no preset flags — let its Step 0 interactive
 checklist run in full (board, categories, recency, compare-offer), and let
 it run all the way through, including its Step 6 "Offer to act", which

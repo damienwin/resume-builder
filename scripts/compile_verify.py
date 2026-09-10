@@ -1,0 +1,102 @@
+#!/usr/bin/env python3
+"""Compile a resume .tex and verify the PDF in one fail-closed call.
+
+Replaces the `tectonic ... | tee ... | tail` + verify_resume_pdf.py pair (two
+tool calls, and a shell pipeline whose exit status is tail's, not tectonic's)
+with one subprocess that:
+
+  * runs tectonic with no shell pipe, so its real return code is authoritative;
+  * writes the combined stdout/stderr to the tectonic log the verifier reads;
+  * runs the same verify_resume_pdf.verify() checks;
+  * emits one combined JSON report and exits nonzero if either step failed.
+
+Nothing about the checks changes — this only removes turns and the
+pipe-masks-tectonic-failure hazard.
+
+Exit status: 0 all checks passed; 1 compile or verification failed; 2 usage.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+from verify_resume_pdf import verify
+
+
+def compile_and_verify(tex: Path, pdf: Path, log: Path, min_fill: float = 720.0,
+                       tectonic: str = "tectonic", timeout: float = 180.0) -> dict:
+    if shutil.which(tectonic) is None:
+        return {"ok": False, "error": f"{tectonic} not found on PATH",
+                "checks": [{"check": "tectonic", "ok": False,
+                            "detail": f"{tectonic} not found on PATH"}]}
+
+    try:
+        proc = subprocess.run([tectonic, str(tex)], capture_output=True,
+                              text=True, timeout=timeout)
+        combined = proc.stdout + proc.stderr
+        returncode = proc.returncode
+    except subprocess.TimeoutExpired:
+        combined = f"tectonic timed out after {timeout}s\n"
+        returncode = -1
+    except OSError as exc:  # e.g. permission denied
+        return {"ok": False, "error": str(exc),
+                "checks": [{"check": "tectonic", "ok": False, "detail": str(exc)}]}
+
+    log.write_text(combined, encoding="utf-8")
+    compile_ok = returncode == 0
+
+    if pdf.exists():
+        report = verify(tex, pdf, log, min_fill)
+    else:
+        report = {"ok": False, "tex": str(tex), "pdf": str(pdf), "checks": [
+            {"check": "extraction", "ok": False,
+             "detail": "compile failed; no PDF produced"}]}
+
+    return {
+        "ok": bool(compile_ok and report.get("ok")),
+        "tex": str(tex),
+        "pdf": str(pdf),
+        "compile": {"ok": compile_ok, "returncode": returncode, "log": str(log)},
+        "verify": report,
+        "checks": report.get("checks", []),
+    }
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("tex", type=Path)
+    ap.add_argument("pdf", type=Path)
+    ap.add_argument("--log", type=Path, default=None)
+    ap.add_argument("--min-fill", type=float, default=720.0)
+    ap.add_argument("--tectonic", default="tectonic")
+    ap.add_argument("--timeout", type=float, default=180.0)
+    ap.add_argument("--json-out", type=Path)
+    ap.add_argument("--timer-skill")
+    ap.add_argument("--timer-scope", default="")
+    ap.add_argument("--timer-label", default="compile_verify")
+    args = ap.parse_args()
+
+    if not args.tex.exists():
+        print(f"error: {args.tex} does not exist", file=sys.stderr)
+        return 2
+    log = args.log or args.tex.with_suffix(".tectonic.log")
+
+    report = compile_and_verify(args.tex, args.pdf, log, args.min_fill,
+                                args.tectonic, args.timeout)
+
+    if args.json_out:
+        args.json_out.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    if args.timer_skill:
+        import run_timer
+        run_timer.mark(args.timer_skill, args.timer_label, args.timer_scope)
+
+    print(json.dumps(report, indent=2))
+    return 0 if report["ok"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

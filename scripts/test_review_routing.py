@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -25,6 +26,28 @@ class ReviewRoutingTests(unittest.TestCase):
         self.assertFalse(detected["chatgpt"]["available"])
         overridden = detect_capabilities({}, {"RESUME_BUILDER_CHATGPT_AVAILABLE": "true"}, lambda _: None)
         self.assertTrue(overridden["chatgpt"]["available"])
+
+    def test_detects_codex_at_known_install_path(self):
+        candidate = os.path.expanduser(
+            "~/Library/Application Support/com.conductor.app/bin/codex")
+        detected = detect_capabilities({}, {}, lambda cmd: cmd if cmd == candidate else None)
+        self.assertTrue(detected["chatgpt"]["available"])
+        self.assertEqual(detected["chatgpt"]["command"], candidate)
+
+    def test_command_env_override_wins_over_candidates(self):
+        detected = detect_capabilities(
+            {}, {"RESUME_BUILDER_CHATGPT_COMMAND": "/custom/codex"},
+            lambda cmd: cmd if cmd == "/custom/codex" else None)
+        self.assertTrue(detected["chatgpt"]["available"])
+        self.assertEqual(detected["chatgpt"]["command"], "/custom/codex")
+
+    def test_route_carries_resolved_reviewer_command(self):
+        route = choose_route({
+            "claude": {"available": True, "command": "claude"},
+            "chatgpt": {"available": True, "command": "/opt/codex"},
+        })
+        self.assertEqual(route["reviewer"]["provider"], "chatgpt")
+        self.assertEqual(route["reviewer"]["command"], "/opt/codex")
 
     def test_all_subscription_matrices_have_a_safe_route(self):
         dual = review_plan("auto", "review", capabilities(True, True), audit=passing_audit())

@@ -34,6 +34,33 @@ def _bool(value: Any) -> Optional[bool]:
     return None
 
 
+# Candidate executables per provider. The Conductor/ChatGPT-app paths matter
+# because `codex` is frequently installed inside an app bundle rather than on
+# PATH, which is exactly why detection reported chatgpt.available=false and
+# silently downgraded the cross-provider review to same-provider.
+PROVIDER_COMMAND_ENV = {
+    "claude": "RESUME_BUILDER_CLAUDE_COMMAND",
+    "chatgpt": "RESUME_BUILDER_CHATGPT_COMMAND",
+}
+PROVIDER_EXTRA_ENV = {
+    "claude": (),
+    "chatgpt": ("CODEX_CLI_PATH",),
+}
+PROVIDER_CANDIDATES = {
+    "claude": ("claude",),
+    "chatgpt": (
+        "codex",
+        "~/Library/Application Support/com.conductor.app/bin/codex",
+        "~/Applications/ChatGPT.app/Contents/Resources/codex",
+        "/Applications/ChatGPT.app/Contents/Resources/codex",
+    ),
+}
+PROVIDER_AVAILABLE_ENV = {
+    "claude": "RESUME_BUILDER_CLAUDE_AVAILABLE",
+    "chatgpt": "RESUME_BUILDER_CHATGPT_AVAILABLE",
+}
+
+
 def detect_capabilities(
     config: Optional[dict[str, Any]] = None,
     environ: Optional[dict[str, str]] = None,
@@ -45,23 +72,40 @@ def detect_capabilities(
     executable discovery, which makes a fresh clone and CI deterministic.
     Presence means the CLI is locally usable; it intentionally does not claim
     to inspect or expose authentication credentials.
+
+    Command resolution order per provider: an explicit
+    ``RESUME_BUILDER_<PROVIDER>_COMMAND`` env var, a provider-specific alias
+    (e.g. ``CODEX_CLI_PATH``), then the known install locations. ``which`` is
+    injectable so tests never touch the real filesystem.
     """
     config = config or {}
     environ = environ if environ is not None else os.environ
-    providers = {
-        "claude": {"command": "claude", "env": "RESUME_BUILDER_CLAUDE_AVAILABLE"},
-        "chatgpt": {"command": "codex", "env": "RESUME_BUILDER_CHATGPT_AVAILABLE"},
-    }
     result: dict[str, Any] = {}
-    for name, settings in providers.items():
+    for name in ("claude", "chatgpt"):
         configured = _bool(config.get(name))
-        overridden = _bool(environ.get(settings["env"]))
+        overridden = _bool(environ.get(PROVIDER_AVAILABLE_ENV[name]))
         available = overridden if overridden is not None else configured
         source = "environment" if overridden is not None else "configuration"
+
+        candidates: list[str] = []
+        for key in (PROVIDER_COMMAND_ENV[name], *PROVIDER_EXTRA_ENV[name]):
+            value = environ.get(key)
+            if value:
+                candidates.append(value)
+        candidates.extend(PROVIDER_CANDIDATES[name])
+
+        resolved = None
+        for candidate in candidates:
+            found = which(os.path.expanduser(candidate))
+            if found:
+                resolved = found
+                break
+
         if available is None:
-            available = bool(which(settings["command"]))
+            available = bool(resolved)
             source = "executable"
-        result[name] = {"available": available, "source": source, "command": settings["command"]}
+        result[name] = {"available": bool(available), "source": source,
+                        "command": resolved or PROVIDER_CANDIDATES[name][0]}
     return result
 
 
@@ -157,17 +201,24 @@ def choose_route(capabilities: dict[str, Any]) -> dict[str, Any]:
         value = capabilities.get(name, {}) if isinstance(capabilities, dict) else {}
         return isinstance(value, dict) and bool(value.get("available"))
 
+    def command(name: str) -> Optional[str]:
+        value = capabilities.get(name, {}) if isinstance(capabilities, dict) else {}
+        return value.get("command") if isinstance(value, dict) else None
+
     claude = available("claude")
     chatgpt = available("chatgpt")
     if claude and chatgpt:
-        return {"author": {"provider": "claude", "model": "sonnet"},
-                "reviewer": {"provider": "chatgpt", "model": "gpt-5.6-luna", "isolated": True}}
+        return {"author": {"provider": "claude", "model": "sonnet", "command": command("claude")},
+                "reviewer": {"provider": "chatgpt", "model": "gpt-5.6-luna",
+                             "isolated": True, "command": command("chatgpt")}}
     if claude:
-        return {"author": {"provider": "claude", "model": "sonnet"},
-                "reviewer": {"provider": "claude", "model": "sonnet", "isolated": True}}
+        return {"author": {"provider": "claude", "model": "sonnet", "command": command("claude")},
+                "reviewer": {"provider": "claude", "model": "sonnet",
+                             "isolated": True, "command": command("claude")}}
     if chatgpt:
-        return {"author": {"provider": "chatgpt", "model": "gpt-5.6-luna"},
-                "reviewer": {"provider": "chatgpt", "model": "gpt-5.6-luna", "isolated": True}}
+        return {"author": {"provider": "chatgpt", "model": "gpt-5.6-luna", "command": command("chatgpt")},
+                "reviewer": {"provider": "chatgpt", "model": "gpt-5.6-luna",
+                             "isolated": True, "command": command("chatgpt")}}
     return {"author": None, "reviewer": None}
 
 

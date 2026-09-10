@@ -28,13 +28,13 @@ the JSON files directly.
 Find the installed plugin's helper (the version directory changes on update):
 
 ```bash
-ls -d ~/.Codex/plugins/cache/neonwatty-plugins/job-apply/*/scripts/job-apply-store.py
+ls -d ~/.claude/plugins/cache/neonwatty-plugins/job-apply/*/scripts/job-apply-store.py
 ```
 
 If missing, tell the user to install the plugin
-(`Codex plugin marketplace add neonwatty/job-apply-plugin` then
-`Codex plugin install job-apply@neonwatty-plugins`) and stop. If more than one
-version directory exists, use the one `Codex plugin list` reports as
+(`claude plugin marketplace add neonwatty/job-apply-plugin` then
+`claude plugin install job-apply@neonwatty-plugins`) and stop. If more than one
+version directory exists, use the one `claude plugin list` reports as
 installed. Call the resolved path `$STORE` below, then:
 
 ```bash
@@ -118,5 +118,5 @@ Only with explicit remember-consent store via
 Summarize what changed: fields added/updated in the profile, answers seeded,
 anything skipped for confidentiality — **without printing sensitive values**.
 Remind the user that the actual filling flow is `/job-apply:job-apply
-<job URL>` (with the Codex in Chrome extension connected), which always stops
+<job URL>` (with the Claude in Chrome extension connected), which always stops
 at final review and never submits.
