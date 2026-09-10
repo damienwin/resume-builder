@@ -108,6 +108,36 @@ class LogMetricTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertNotIn("variant", records[0])
 
+    def test_concurrent_appends_never_tear_a_line(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            scripts_dir = tmp / "scripts"
+            scripts_dir.mkdir()
+            script_copy = scripts_dir / "log_metric.py"
+            shutil.copy(SCRIPT_SRC, script_copy)
+            env = os.environ.copy()
+            env.pop("RESUME_BUILDER_VARIANT", None)
+
+            procs = [
+                subprocess.Popen(
+                    [sys.executable, str(script_copy), "job_scan",
+                     json.dumps({"writer": i, "payload": "x" * 2000})],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env,
+                )
+                for i in range(16)
+            ]
+            for p in procs:
+                self.assertEqual(p.wait(), 0)
+
+            metrics_path = tmp / "knowledge" / "metrics.jsonl"
+            lines = [l for l in metrics_path.read_text().splitlines() if l.strip()]
+            self.assertEqual(len(lines), 16)
+            writers = set()
+            for line in lines:
+                record = json.loads(line)  # a torn line would raise
+                writers.add(record["writer"])
+            self.assertEqual(writers, set(range(16)))
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

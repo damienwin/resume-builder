@@ -88,6 +88,14 @@ Never overwrite prior measurements when models, prompts, or skills change.
   skill's separate tool calls via a scratch file), `metrics_summary.py`
   (`--perf`/`--ab` CLI reports), and `build_metrics_dashboard.py` (renders
   `knowledge/dashboard.html`, now with latency/cost/token-mix panels).
+- `scripts/` also holds the fail-closed phase wrappers that keep a run's
+  deterministic work in one tool call instead of several: `gate_stage.py`
+  (stage audit -> route plan -> timer mark), `compile_verify.py` (tectonic ->
+  PDF verification), and `finalize_resume.py` (final gate -> archive ->
+  routing record -> metric -> handoff). `resume_handoff.py` writes/verifies
+  the hash-bound tailor→apply manifest that stops the fan-out from tailoring a
+  posting twice; `sync_skills.py` generates the `.agents/skills` mirror from
+  the canonical `.claude/skills` (run `--check` in CI).
 - `build/`, `eval/`, `jd.txt` — generated/scratch, gitignored.
 - `tools/hiring-agent/` — third-party clone of HackerRank's open-source ATS,
   used only by `ats-score`. Gitignored, not vendored.

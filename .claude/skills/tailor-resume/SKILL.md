@@ -47,6 +47,12 @@ random token can't collide that way. It also can't be reassigned by
 accident the way `$SLUG` is in Step 5 — see that step for what breaks if the
 scope token changes mid-run.
 
+**If the dispatch handed you a cached JD** — `job-scan` Step 2.5 writes
+`<scratchpad>/jds/<name>.txt` alongside its source URL and sha256 — read that
+file and skip the network fetch entirely when it exists, its sha256 matches
+the supplied one, and its body is non-empty. Refetch only when the cache is
+absent, mismatched, or empty. Never proceed on a guessed JD.
+
 URL → `WebFetch` first. If the page is JS-rendered and comes back as nav
 chrome or an empty body (common on Workday, Greenhouse behind a JS shell,
 and Oracle Cloud/Fusion `*.oraclecloud.com/hcmUI/CandidateExperience/...`
@@ -136,36 +142,31 @@ Copy quotes byte-for-byte, including Markdown list markers between lines.
 Prefer evidence from one source bullet; do not join separate bullets or add
 facts merely implied by general technical knowledge.
 
-Run the deterministic gate and stop to repair the manifest on any failure:
-
-```bash
-python3 scripts/resume_quality_gate.py build/$SLUG.selection.json \
-  --case-path <JD_FILE> --knowledge-root knowledge \
-  --out build/$SLUG.selection-audit.json
-```
-
-The deterministic gate is mandatory at every stage. In the default `auto`
-review mode it is the only selection-stage model check: reserve the LLM review
-for the completed PDF, which avoids paying for two duplicate reviews. Ask the
-router whether an *early* independent review is warranted only after this
-audit passes:
-
-```bash
-python3 scripts/review_routing.py plan --mode auto --stage selection \
-  --artifact build/$SLUG.selection.json --audit build/$SLUG.selection-audit.json \
-  > build/$SLUG.selection-route.json
-```
-
-Run a fresh-context judge only if `review_required` is true. This happens for
-risk signals such as skills-list evidence, repeated JD mappings, or audit
-warnings. A hard deterministic failure always has `review_skipped: true` and
-must be repaired before any paid call. `full-stage-review` retains the old
-evaluation behavior; `final-review` suppresses early reviews; and
-`deterministic-only`/`human-review` require a human sign-off before delivery.
+Mark the selection step finished, then run the one-call stage gate: it runs
+the deterministic audit, writes the audit report, asks the router for an early
+review plan, and marks the gate timer, all in one subprocess.
 
 ```bash
 python3 scripts/run_timer.py mark tailor-resume select --scope "$RUN_ID"
+python3 scripts/gate_stage.py build/$SLUG.selection.json \
+  --case-path <JD_FILE> --knowledge-root knowledge --stage selection \
+  --audit-out build/$SLUG.selection-audit.json \
+  --route-out build/$SLUG.selection-route.json \
+  --timer-skill tailor-resume --timer-scope "$RUN_ID" --timer-label selection_gate
 ```
+
+`gate_stage.py` exits nonzero on any hard deterministic failure and, in that
+case, does **not** run the router — repair the manifest and rerun. The
+deterministic gate is mandatory at every stage. In the default `auto` review
+mode it is the only selection-stage model check: reserve the LLM review for
+the completed PDF, which avoids paying for two duplicate reviews. Run a
+fresh-context judge only if the written route's `review_required` is true —
+this happens for risk signals such as skills-list evidence, repeated JD
+mappings, or audit warnings. A hard deterministic failure always has
+`review_skipped: true` and must be repaired before any paid call.
+`full-stage-review` retains the old evaluation behavior; `final-review`
+suppresses early reviews; and `deterministic-only`/`human-review` require a
+human sign-off before delivery.
 
 ## Step 4 — Tailor bullets
 
@@ -223,28 +224,26 @@ that supports every factual detail and every number in that bullet. Never
 combine facts from two distant spans under one citation; either cite one
 contiguous span that contains both or split the bullet.
 
-Run the deterministic gate and repair it before rendering. In `auto` mode,
-use the router only to detect high-risk bullets; normal bullet writing does
-not spend a second model review because the completed resume receives the
-single semantic/readability review in Step 6.
-
-```bash
-python3 scripts/resume_quality_gate.py build/$SLUG.bullets.json \
-  --case-path <JD_FILE> --knowledge-root knowledge \
-  --out build/$SLUG.bullets-audit.json
-python3 scripts/review_routing.py plan --mode auto --stage bullet-writing \
-  --artifact build/$SLUG.bullets.json --audit build/$SLUG.bullets-audit.json \
-  > build/$SLUG.bullets-route.json
-```
-
-If an early review is requested, use the route's provider/model in a fresh
-context, save a standard judge verdict, run the full quality gate, and repair
-at most twice. A failed factuality/readability gate blocks rendering even if
-the wording might improve an ATS score.
+Mark the bullet step finished, then run the same one-call stage gate for the
+bullets:
 
 ```bash
 python3 scripts/run_timer.py mark tailor-resume write_bullets --scope "$RUN_ID"
+python3 scripts/gate_stage.py build/$SLUG.bullets.json \
+  --case-path <JD_FILE> --knowledge-root knowledge --stage bullet-writing \
+  --audit-out build/$SLUG.bullets-audit.json \
+  --route-out build/$SLUG.bullets-route.json \
+  --timer-skill tailor-resume --timer-scope "$RUN_ID" --timer-label bullet_gate
 ```
+
+It exits nonzero on any hard failure and never routes a failed artifact —
+repair and rerun. In `auto` mode, use the written route only to detect
+high-risk bullets; normal bullet writing does not spend a second model review
+because the completed resume receives the single semantic/readability review
+in Step 6b. If an early review is requested, use the route's provider/model in
+a fresh context, save a standard judge verdict, run the full quality gate, and
+repair at most twice. A failed factuality/readability gate blocks rendering
+even if the wording might improve an ATS score.
 
 ## Step 5 — Render
 
@@ -325,16 +324,29 @@ Read `templates/jakes_resume.tex` and fill every `<<PLACEHOLDER>>` into
   the longest left side that compiles clean, not the shortest one that
   obviously will.
 
+Mark the render step finished so the .tex authoring time is measured apart
+from compile and verification:
+
+```bash
+python3 scripts/run_timer.py mark tailor-resume render --scope "$RUN_ID"
+```
+
 ## Step 6 — Compile and verify (one pass)
 
 ```bash
-tectonic build/$SLUG.tex 2>&1 | tee build/$SLUG.tectonic.log | tail -20
-python3 scripts/verify_resume_pdf.py build/$SLUG.tex build/$SLUG.pdf \
-  --log build/$SLUG.tectonic.log
+python3 scripts/compile_verify.py build/$SLUG.tex build/$SLUG.pdf \
+  --log build/$SLUG.tectonic.log --json-out build/$SLUG.verify.json \
+  --timer-skill tailor-resume --timer-scope "$RUN_ID" --timer-label compile_verify
 ```
 
-(Tectonic pulls packages on demand. Missing tools: `brew install tectonic`,
-`brew install poppler`.)
+One subprocess compiles with tectonic (no shell pipe, so tectonic's own exit
+code is authoritative), writes the log, runs every `verify_resume_pdf.py`
+check, and exits nonzero if either step failed. (Tectonic pulls packages on
+demand. Missing tools: `brew install tectonic`, `brew install poppler`.)
+
+On any failure, fix the `.tex` and rerun `compile_verify.py` with
+`--timer-label repair`, so the repair loop is timed separately from the first
+pass.
 
 **`verify_resume_pdf.py` exists because page count alone is not proof of
 completeness.** Observed live 2026-09-01 (Idler tailoring run): an
@@ -423,11 +435,8 @@ fix the `.tex`, recompile, and re-verify on any failure.
    named heading/bullet text is genuinely present in `pdftotext`'s output —
    it isn't one.
 
-Compilation errors → read the output, fix the `.tex`, recompile.
-
-```bash
-python3 scripts/run_timer.py mark tailor-resume compile --scope "$RUN_ID"
-```
+Compilation errors → read the output, fix the `.tex`, rerun `compile_verify.py`
+with `--timer-label repair`.
 
 ## Step 6b — One final semantic/readability review
 
@@ -442,37 +451,89 @@ python3 scripts/review_routing.py plan --mode auto --stage review --final \
   > build/$SLUG.final-route.json
 ```
 
-The route chooses Claude Sonnet as author and Codex Luna as reviewer when
-both subscriptions are available. With only Claude or only ChatGPT, it uses a
-fresh isolated context from that same provider. With neither subscription, or
-in `deterministic-only` / `human-review` mode, do not automatically deliver:
-obtain a human review. Never infer credentials from private files; optional
-gitignored overrides live in `knowledge/review_routing.json` as
+The route chooses Claude Sonnet as author and Codex (GPT) as reviewer when
+both subscriptions are available. Discovery checks
+`RESUME_BUILDER_CHATGPT_COMMAND`, `CODEX_CLI_PATH`, and the known
+Conductor/ChatGPT-app install locations in addition to `PATH`; the resolved
+executable is written to the route as `reviewer.command`. With only one
+subscription it uses a fresh isolated context from that same provider. With
+neither subscription, or in `deterministic-only` / `human-review` mode, do not
+automatically deliver: obtain a human review. Never infer credentials from
+private files; optional gitignored overrides live in
+`knowledge/review_routing.json` as
 `{"claude": true|false, "chatgpt": true|false}`.
 
-If `review_required` is true, have that fresh reviewer return the standard
-five ratings, boolean `factuality_pass`, and evidence-backed findings in
-`build/$SLUG.final-judge.json`, then fail closed on the full gate:
+If `review_required` is true, the route's `reviewer` object says how to get a
+genuinely fresh context. Never let the author review its own artifact inline —
+a self-review is not the adversarial gate. Have the reviewer write the
+standard verdict to `build/$SLUG.final-judge.json`: five 1-5 ratings, boolean
+`factuality_pass`, and evidence-backed findings.
 
-```bash
-python3 scripts/resume_quality_gate.py build/$SLUG.bullets.json \
-  --case-path <JD_FILE> --knowledge-root knowledge \
-  --judge build/$SLUG.final-judge.json --out build/$SLUG.final-quality.json
-```
+- **`reviewer.provider` is `chatgpt`** (Codex): run `reviewer.command` directly.
+
+  ```bash
+  "<reviewer.command>" exec -s read-only --ephemeral \
+    -o build/$SLUG.final-judge.json \
+    "Adversarially review the final resume bullets in build/$SLUG.bullets.json \
+against the job description at <JD_FILE> and the evidence in knowledge/. \
+Output JSON with ratings {scanability, clarity, specificity, naturalness, \
+confidence} each 1-5, factuality_pass (bool), and evidence-backed findings."
+  ```
+
+- **`reviewer.provider` is the same as the author** (only one subscription):
+  spawn a fresh isolated subagent (the Agent/Task tool) with that same prompt
+  and have it write the verdict file. Do not review in the current context.
+
+If the routed reviewer is unavailable or errors, fail closed to human review —
+never pass the gate by default.
 
 Repair at most twice, rerender, and repeat the final review. Archive only a
 passing final gate or an explicitly completed human review.
 
-## Step 7 — Save
+## Step 7 — Save and finalize (one fail-closed call)
 
-`build/$SLUG.pdf` and `build/$SLUG.tex` stay as working files. If
-`rules.md` defines an archive location and naming convention, copy the
-verified PDF there — **only after every Step 6 check passed.** If the
-destination is ambiguous, ask once.
+`finalize_resume.py` runs the final gate, archives the PDF, writes the review
+routing record, logs the `resume_tailor` metric, closes the run timer, and
+emits the tailor→apply handoff manifest — in that order, and nothing happens
+unless the gate passes:
 
-Copy, never compile in place, and never archive an unverified PDF: the
-archive folder is what job-scan reads to decide a company was already
-applied to, so a bad file there costs a real posting on a later scan.
+```bash
+python3 scripts/finalize_resume.py build/$SLUG.bullets.json \
+  --case-path <JD_FILE> --knowledge-root knowledge \
+  --judge build/$SLUG.final-judge.json \
+  --quality-out build/$SLUG.final-quality.json \
+  --plan build/$SLUG.final-route.json \
+  --review-telemetry build/$SLUG.final-telemetry.json \
+  --repair-count <N> \
+  --routing-metrics knowledge/review_routing_runs.jsonl \
+  --archive-pdf build/$SLUG.pdf \
+  --archive-dir "<archive folder from rules.md>" \
+  --archive-name "<Tag> Damien Nguyen.pdf" \
+  --handoff-out build/$SLUG.handoff.json \
+  --handoff-posting-url "<posting URL>" --handoff-jd-file <JD_FILE> \
+  --handoff-tex build/$SLUG.tex --handoff-reviewer "<provider/model>" \
+  --metric-event resume_tailor --metric-json '{
+    "company": "<company>", "role": "<role title>",
+    "jd_source": "<url, file path, or \"pasted\">",
+    "output_path": "<archived PDF path, else build/$SLUG.pdf>",
+    "experiences_included": ["<name>", ...],
+    "projects_included": ["<name>", ...],
+    "required_keywords_total": <N>, "required_keywords_covered": <N>,
+    "review_mode": "auto", "reviewer": "<provider/model or human>",
+    "final_quality_mean": <judge mean or null>,
+    "quality_repairs": <total repair attempts>
+  }' \
+  --timer-skill tailor-resume --timer-scope "$RUN_ID" --timer-label final_review
+```
+
+`duration_s` and the `steps` breakdown are filled in from the closed timer, so
+they are not in `--metric-json`. Omit `--archive-*` when `rules.md` defines no
+archive. Omit `--handoff-*` unless this run will feed an `apply` (job-scan's
+fan-out does). If the archive destination is ambiguous, ask once.
+
+Copy, never compile in place, and never archive an unverified PDF: the archive
+folder is what job-scan reads to decide a company was already applied to, so a
+bad file there costs a real posting on a later scan.
 
 ## Step 8 — Report
 
@@ -490,53 +551,16 @@ applied to, so a bad file there costs a real posting on a later scan.
   open-source score far more than personal repos, which are capped low.
   Point to `/ats-score` for an actual — noisy, diagnostic-only — score.
 
-## Step 9 — Log metrics
+## Step 9 — Metrics
 
-Close out the run timer first — its output has `duration_s` and a `steps`
-breakdown (`read_knowledge`, `select`, `selection_gate`, `write_bullets`,
-`bullet_gate`, `compile`, `final_review`). Mark deterministic gates and the
-single final review when they pass:
-
-```bash
-python3 scripts/run_timer.py mark tailor-resume selection_gate --scope "$RUN_ID"
-python3 scripts/run_timer.py mark tailor-resume bullet_gate --scope "$RUN_ID"
-python3 scripts/run_timer.py mark tailor-resume final_review --scope "$RUN_ID"
-```
-
-```bash
-python3 scripts/run_timer.py finish tailor-resume --scope "$RUN_ID"
-```
-
-```bash
-python3 scripts/log_metric.py resume_tailor '{
-  "company": "<company>", "role": "<role title>",
-  "jd_source": "<url, file path, or \"pasted\">",
-  "output_path": "<archived PDF path, else build/$SLUG.pdf>",
-  "experiences_included": ["<name>", ...],
-  "projects_included": ["<name>", ...],
-  "required_keywords_total": <N>, "required_keywords_covered": <N>,
-  "review_mode": "auto",
-  "reviewer": "<provider/model or human>",
-  "final_quality_mean": <judge mean or null>,
-  "quality_repairs": <total repair attempts>,
-  "duration_s": <from run_timer finish>, "steps": <from run_timer finish>
-}'
-```
-
-Record the routing decision regardless of whether a paid review ran, and add
-review latency/tokens/cost only when observed:
-
-```bash
-python3 scripts/review_routing.py record \
-  --metrics-path knowledge/review_routing_runs.jsonl \
-  --plan build/$SLUG.final-route.json --review-telemetry build/$SLUG.final-telemetry.json \
-  --repair-count <N> --final-gate build/$SLUG.final-quality.json
-```
-
-Fire-and-forget — don't block or re-render Step 8 on it, and don't mention
-it to the user. `job-scan` reads these records to tell an already-applied
-posting from a genuinely new one, so the `company` and `role` fields must be
-accurate.
+Already handled by Step 7's `finalize_resume.py` call: it closed the run timer
+and logged the `resume_tailor` event with the `steps` breakdown
+(`read_knowledge`, `select`, `selection_gate`, `write_bullets`, `bullet_gate`,
+`render`, `compile_verify`, `repair`, `final_review`) folded in, and recorded
+the routing decision regardless of whether a paid review ran. There is nothing
+extra to run — just make sure the `--metric-json` fields in Step 7 are
+accurate. `job-scan` reads these records to tell an already-applied posting
+from a genuinely new one, so `company` and `role` must be correct.
 
 ## Hard rules
 

@@ -31,15 +31,28 @@ RUN_ID=$(python3 -c "import uuid; print(uuid.uuid4().hex[:10])")
 python3 scripts/run_timer.py start apply --scope "$RUN_ID"
 ```
 
-Run the **tailor-resume** skill (`.claude/skills/tailor-resume/SKILL.md`) on
-the given job URL / JD file / pasted text, exactly as `/tailor` would —
-including its ATS-safety pass, one-page check, and the archive step from
-`knowledge/rules.md` (copy to `~/Desktop/Tailored Resumes/<Tag> Damien
-Nguyen.pdf`). That skill names its working files `build/<slug>.*` per job —
-do not reintroduce a shared `build/resume.pdf`. Do not skip tailoring even if
-some build looks recent; it may have been tailored for a different company.
-Only skip if the user explicitly confirms the current build was tailored for
-**this** posting in this session.
+**First check for a verified handoff from a tailor that already ran for this
+posting** — job-scan's fan-out tailors once and writes
+`build/$SLUG.handoff.json`:
+
+```bash
+python3 scripts/resume_handoff.py verify \
+  --manifest build/$SLUG.handoff.json --posting-url "<job URL>"
+```
+
+- **Exit 0** → the manifest's `pdf` is the tailored, gate-passed PDF for this
+  posting. Skip tailoring entirely and use that path in Step 2. This is what
+  stops the fan-out from tailoring the same posting twice.
+- **Exit 1, or no manifest** → run the **tailor-resume** skill
+  (`.claude/skills/tailor-resume/SKILL.md`) on the given URL / JD file / pasted
+  text, exactly as `/tailor` would — including its ATS-safety pass, one-page
+  check, and archive. Its Step 7 writes `build/$SLUG.handoff.json`; verify that
+  manifest before continuing.
+
+Never tailor off a stale build: the manifest hashes the JD, PDF, `.tex`, and
+final gate, so a mismatch means "tailor again," not "trust it." That skill
+names its working files `build/<slug>.*` per job — do not reintroduce a shared
+`build/resume.pdf`.
 
 ```bash
 python3 scripts/run_timer.py mark apply tailor --scope "$RUN_ID"
@@ -71,11 +84,14 @@ Treat set-then-upload as one critical section, and hold a lock across it:
 
 ```bash
 LOCK=~/.job-apply/.resumepath.lock
-for i in $(seq 1 60); do                       # bounded: ~3 min, never forever
+# Wait budget (~3 min) must exceed the stale-lock age (2 min), or a lock
+# leaked by a dead fork younger than the stale age can never be broken inside
+# the loop and every waiter fails without ever self-healing. Only the short
+# write -> upload -> verify window is held; a real one takes seconds, so 2 min
+# is already generous.
+for i in $(seq 1 60); do
   mkdir "$LOCK" 2>/dev/null && break
-  # Break a lock leaked by a fork that died mid-upload. No real upload takes
-  # 5 minutes, so an older lock has no live owner.
-  if [ -d "$LOCK" ] && [ -n "$(find "$LOCK" -maxdepth 0 -mmin +5)" ]; then
+  if [ -d "$LOCK" ] && [ -n "$(find "$LOCK" -maxdepth 0 -mmin +2)" ]; then
     rmdir "$LOCK" 2>/dev/null
   fi
   sleep 3

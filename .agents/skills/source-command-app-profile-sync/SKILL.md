@@ -9,6 +9,6 @@ Use this skill when the user asks to run the migrated source command `app-profil
 
 ## Command Template
 
-Run the **app-profile-sync** skill (`.Codex/skills/app-profile-sync/SKILL.md`)
+Run the **app-profile-sync** skill (`.agents/skills/app-profile-sync/SKILL.md`)
 to merge frontmatter facts from `knowledge/` into the job-apply plugin's local
 store via the plugin's own helper script. Follow that skill's steps exactly.

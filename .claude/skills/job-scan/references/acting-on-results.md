@@ -84,9 +84,13 @@ If a requirement is genuinely unmet, or the user declines to answer: stop
 immediately, do not tailor or open a browser tab, and report the specific
 conflicting line so the user can decide whether to override it.
 
-**b. Run the full `tailor-resume` skill** for the posting — fetch the JD,
-archive the verified PDF per `rules.md`'s "Output archive" section, and log
-via `scripts/log_metric.py resume_tailor`.
+**b. Run the full `tailor-resume` skill** for the posting. Pass it the JD
+cache from the scan: the `<scratchpad>/jds/<name>.txt` path, its source URL,
+and its sha256 (`shasum -a 256 <path>`). The skill uses that cached file when
+the hash matches and only fetches when the cache is missing or stale — this is
+what stops every fork from re-fetching a JD the scan already downloaded.
+Archive the verified PDF per `rules.md`'s "Output archive" section; the
+skill's Step 7 logs `resume_tailor` and writes `build/<slug>.handoff.json`.
 
 For JS-rendered ATS pages WebFetch can't extract, try in order: Workday's
 `wday/cxs/<tenant>/<site>/job/...` JSON API, then a `.md`/markdown alternate
@@ -94,9 +98,10 @@ link some platforms expose in the page `<head>`, and only then fall back to
 asking the user for pasted JD text.
 
 **c. If the action is "tailor + apply"**, run the `apply` skill
-(`.claude/skills/apply/SKILL.md`) for that URL exactly as `/apply <url>`
-would — it already handles pointing the store at the archived PDF and filling
-the form. Two of its details exist specifically because of this parallel
+(`.claude/skills/apply/SKILL.md`) for that URL. It first verifies the handoff
+manifest Step (b) wrote and, when it matches this posting, **skips tailoring**
+— so the posting is tailored exactly once. Do **not** invoke `tailor-resume`
+again before `apply`. Its remaining details exist because of this parallel
 fan-out and must not be skipped: per-job `build/<slug>.*` working files, and
 the lock held across the `resumePath` write and the resume upload (that field
 is global and Chrome uploads one file at a time, so an unlocked fork can

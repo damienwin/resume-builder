@@ -27,12 +27,12 @@ cp .env.example .env
 
 Read `tools/hiring-agent/providers.json` at setup time (don't assume its
 contents) to confirm which models/providers are available — the repo evolves.
-Prefer the `anthropic` provider with model `Codex-haiku-4-5` if present in
+Prefer the `anthropic` provider with model `claude-haiku-4-5` if present in
 providers.json (cheap, no local model download, no Ollama dependency). Set in
 `tools/hiring-agent/.env`:
 
 ```
-DEFAULT_MODEL=Codex-haiku-4-5
+DEFAULT_MODEL=claude-haiku-4-5
 ```
 
 `ANTHROPIC_API_KEY` must be set in the shell environment or in
