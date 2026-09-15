@@ -117,6 +117,19 @@ class BulletPresentTests(unittest.TestCase):
         self.assertFalse(vrp.bullet_present(long_bullet, rendered))
 
 
+class DateRangeTests(unittest.TestCase):
+    def test_en_dash_ranges_flagged(self):
+        raw = "Aug 2023 – May 2027\nSDE Intern May 2026—Present\n2019 – 2021"
+        self.assertEqual(vrp.non_ascii_date_ranges(raw),
+                         ["Aug 2023 – May 2027", "May 2026—Present", "2019 – 2021"])
+
+    def test_ascii_hyphen_ranges_pass(self):
+        self.assertEqual(vrp.non_ascii_date_ranges("Aug 2023 - May 2027\nJan 2024 - Present"), [])
+
+    def test_non_date_dashes_ignored(self):
+        self.assertEqual(vrp.non_ascii_date_ranges("cut 63.4s – 100ms, p50 – p99"), [])
+
+
 class NormalizeTests(unittest.TestCase):
     def test_idempotent(self):
         s = "AWS  |  Seattle—WA"

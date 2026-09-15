@@ -102,6 +102,9 @@
 
 %-----------EDUCATION-----------
 % Filled from knowledge/education.md — only the coursework line changes per JD
+% Every date range (<<SCHOOL_DATES>>, <<DATES>>, <<DATE>>) uses a single ASCII
+% hyphen: "May 2025 - Aug 2025", never "--". LaTeX turns -- into an en dash,
+% and Workday-style resume importers split ranges only on "-" and drop dates.
 \section{Education}
   \resumeSubHeadingListStart
     \resumeSubheading

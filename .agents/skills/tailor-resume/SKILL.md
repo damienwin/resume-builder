@@ -301,6 +301,11 @@ Read `templates/jakes_resume.tex` and fill every `<<PLACEHOLDER>>` into
 
 ### ATS-safe LaTeX rules (hard requirements, from real extraction failures)
 
+- **Date ranges use one ASCII hyphen:** `{May 2025 - Aug 2025}`, never
+  `--` or a Unicode dash. LaTeX renders `--` as an en dash (U+2013), and
+  Workday-style resume importers split ranges only on `-`, silently dropping
+  the end date or the whole education entry. Applies to date cells only;
+  `compile_verify.py` fails the `date_ranges` check otherwise.
 - **No math-mode symbols in bullet text.** Never `$\to$`, `$\times$`,
   `$\sim$` — they extract as Unicode glyphs glued to adjacent digits
   (`63.4s→<100ms`), which keyword matchers mis-tokenize. Write plain ASCII:

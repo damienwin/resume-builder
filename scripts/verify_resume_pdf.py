@@ -27,6 +27,9 @@ fails loudly when they disagree.
   4. overfull        — no "Overfull \\hbox" in the tectonic log, if given
   5. placeholders    — no surviving <<PLACEHOLDER>> in the .tex
   6. header          — first extracted lines are non-empty
+  7. date_ranges     — every date range in the extracted text is split by an
+                       ASCII hyphen, not an en/em dash (`--` in LaTeX), which
+                       Workday-style resume importers fail to parse
 
 Exit status is 0 only when every check passes; 1 otherwise. `--json` prints
 a machine-readable report. Needs `pdftotext` and `pdfinfo` (poppler).
@@ -162,6 +165,20 @@ def bullet_present(snippet: str, text: str) -> bool:
     return bool(head) and head in squashed_text and tail in squashed_text
 
 
+_DATE = r"(?:(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\.?\s+)?\d{4}"
+_BAD_DATE_RANGE = re.compile(
+    _DATE + r"\s*[‐-―−]\s*(?:" + _DATE + r"|Present|Current|Now)\b"
+)
+
+
+def non_ascii_date_ranges(raw_text: str) -> list[str]:
+    """Date ranges in the raw extracted text joined by a Unicode dash.
+
+    Must run on raw pdftotext output: normalize() folds dashes to ASCII.
+    """
+    return [re.sub(r"\s+", " ", m.group(0)) for m in _BAD_DATE_RANGE.finditer(raw_text)]
+
+
 def measure_fill(pdf: Path) -> float | None:
     try:
         out = _run(["pdftotext", "-bbox", str(pdf), "-"])
@@ -246,6 +263,11 @@ def verify(tex_path: Path, pdf_path: Path, log_path: Path | None,
 
     header = [ln for ln in raw_text.splitlines()[:4] if ln.strip()]
     add("header", len(header) >= 2, f"{len(header)} non-empty lines")
+
+    bad_dates = non_ascii_date_ranges(raw_text)
+    add("date_ranges", not bad_dates,
+        "all ASCII-hyphen" if not bad_dates
+        else f"{len(bad_dates)} use a Unicode dash (write `-`, not `--`): {bad_dates[:3]}")
 
     return {
         "ok": all(c["ok"] for c in checks),
