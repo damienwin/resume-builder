@@ -443,7 +443,14 @@ fix the `.tex`, recompile, and re-verify on any failure.
 Compilation errors → read the output, fix the `.tex`, rerun `compile_verify.py`
 with `--timer-label repair`.
 
-## Step 6b — One final semantic/readability review
+## Step 6b — One final semantic/readability review (optional, default off)
+
+**Check `knowledge/rules.md` for a "Final semantic review" section first.**
+If it says off (the default) and this run has no explicit user request to
+run it, skip this entire step — go straight to Step 7 and omit
+`--judge`/`--plan`/`--review-telemetry` from `finalize_resume.py`, which
+falls back to the deterministic-only gate. Only run the steps below when
+`rules.md` says on, or the user asked for it this run.
 
 After the PDF has passed Step 6, build a `review` artifact that cites the
 final bullets (or reuse the valid bullet artifact if it exactly matches the
