@@ -122,6 +122,25 @@ own expectation. If it isn't, stop and fix before continuing. Release the
 lock (`rmdir "$LOCK"`) once the filename is confirmed; the rest of the form
 needs no lock.
 
+**A company careers page may iframe the real form cross-origin**, where
+browser automation cannot reach the fields — the tab looks right and every
+interaction silently does nothing. Go to the ATS's own endpoint instead:
+
+| Careers URL | Use instead |
+|---|---|
+| `careers.roblox.com/jobs/<id>` | `job-boards.greenhouse.io/embed/job_app?for=roblox&token=<id>` |
+| any Greenhouse-backed careers page | `job-boards.greenhouse.io/embed/job_app?for=<org>&token=<job id>` |
+
+The job id is the `gh_jid` query parameter on the careers URL. Two Roblox
+applications were logged `failed` for exactly this reason before the embed
+endpoint was used. If a form accepts no input and reports no error, suspect
+a cross-origin iframe before retrying the same tab.
+
+**`form_input` reports success on React comboboxes without the value
+sticking** (seen on Greenhouse's country and clearance dropdowns). Never
+trust its return value on a custom dropdown — re-read the field visually
+and click through the option list when it didn't take.
+
 ## Step 4 — Stop at final review
 
 The plugin never submits; neither does this skill. Summarize the filled

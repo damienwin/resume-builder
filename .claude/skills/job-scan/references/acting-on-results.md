@@ -92,6 +92,19 @@ what stops every fork from re-fetching a JD the scan already downloaded.
 Archive the verified PDF per `rules.md`'s "Output archive" section; the
 skill's Step 7 logs `resume_tailor` and writes `build/<slug>.handoff.json`.
 
+**Pick an archive name that cannot collide.** List the destination folder
+before naming. If the plain `<Company> Resume Damien Nguyen.pdf` is already
+taken by a *different* role, use a role-distinguishing name
+(`Anduril Battlespace Radar Resume Damien Nguyen.pdf`). The archive is
+append-only history with no version control behind it, so clobbering an
+entry destroys a prior application's resume irrecoverably — and the
+filenames double as job-scan's already-applied ledger, so a lost name also
+corrupts future scans. `finalize_resume.py` now hard-errors on a collision
+rather than overwriting; `--archive-overwrite` exists only for re-running
+the *same* posting. Do not assume the name is free because the scan
+attached no `applied_note`: that note only fires on a *recent* same-company
+archive and silently misses older files.
+
 For JS-rendered ATS pages WebFetch can't extract, try in order: Workday's
 `wday/cxs/<tenant>/<site>/job/...` JSON API, then a `.md`/markdown alternate
 link some platforms expose in the page `<head>`, and only then fall back to

@@ -124,6 +124,27 @@ class FinalizeResumeTests(unittest.TestCase):
         self.assertFalse(self.metrics.exists())
         self.assertFalse(self.handoff.exists())
 
+    def test_existing_archive_name_is_never_clobbered(self):
+        self.archive.mkdir(parents=True)
+        prior = self.archive / "Acme Resume.pdf"
+        prior.write_bytes(b"%PDF-1.4 a different role's resume")
+        with self.assertRaises(FileExistsError):
+            self._run()
+        self.assertEqual(prior.read_bytes(), b"%PDF-1.4 a different role's resume")
+
+    def test_archive_overwrite_replaces_deliberately(self):
+        self.archive.mkdir(parents=True)
+        prior = self.archive / "Acme Resume.pdf"
+        prior.write_bytes(b"%PDF-1.4 stale build of the same posting")
+        result = finalize(
+            self.bullets, self.case, self.knowledge,
+            quality_out=self.root / "quality.json", judge=self.judge,
+            archive_pdf=self.pdf, archive_dir=self.archive,
+            archive_name="Acme Resume.pdf", archive_overwrite=True,
+        )
+        self.assertEqual(result["archived"], str(prior))
+        self.assertEqual(prior.read_bytes(), self.pdf.read_bytes())
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

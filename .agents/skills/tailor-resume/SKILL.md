@@ -53,6 +53,15 @@ file and skip the network fetch entirely when it exists, its sha256 matches
 the supplied one, and its body is non-empty. Refetch only when the cache is
 absent, mismatched, or empty. Never proceed on a guessed JD.
 
+**"Non-empty" is not enough — check that it holds an actual JD.** A matching
+sha256 only proves the file hasn't changed since it was hashed, not that it
+ever had content: an Ashby/JS-rendered page saved by `fetch_urls.py` can be
+a ~135-byte JS shell that passes both the hash and a bare emptiness check.
+Treat a cache under ~1000 characters, or one with no qualifications/
+responsibilities prose, as a miss and recover it the same way a failed fetch
+is recovered (below) — for Ashby specifically, the page's `ld+json` block
+carries the full description.
+
 URL → `WebFetch` first. If the page is JS-rendered and comes back as nav
 chrome or an empty body (common on Workday, Greenhouse behind a JS shell,
 and Oracle Cloud/Fusion `*.oraclecloud.com/hcmUI/CandidateExperience/...`

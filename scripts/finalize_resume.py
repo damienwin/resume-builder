@@ -48,7 +48,8 @@ def finalize(bullets: Path, case_path: Path, knowledge_root: Path,
              plan: Path | None = None, review_telemetry: Path | None = None,
              repair_count: int = 0, routing_metrics: Path | None = None,
              archive_pdf: Path | None = None, archive_dir: Path | None = None,
-             archive_name: str | None = None, metric_event: str | None = None,
+             archive_name: str | None = None, archive_overwrite: bool = False,
+             metric_event: str | None = None,
              metric_json: str | None = None, metrics_path: Path | None = None,
              handoff_out: Path | None = None, handoff_posting_url: str | None = None,
              handoff_jd_file: Path | None = None, handoff_tex: Path | None = None,
@@ -72,6 +73,20 @@ def finalize(bullets: Path, case_path: Path, knowledge_root: Path,
         archive_dir = Path(archive_dir)
         archive_dir.mkdir(parents=True, exist_ok=True)
         dest = archive_dir / (archive_name or archive_pdf.name)
+        # The archive is append-only history: one PDF per posting, and the
+        # filenames double as job-scan's already-applied ledger. Clobbering
+        # one destroys a prior application's resume with no undo (the folder
+        # is not under version control), so a collision is a hard error the
+        # caller resolves by picking a role-distinguishing --archive-name.
+        # --archive-overwrite is only for re-running the *same* posting.
+        if dest.exists() and not archive_overwrite:
+            raise FileExistsError(
+                f"refusing to overwrite existing archived resume: {dest}\n"
+                f"a different role already uses this name -- pass a "
+                f"role-distinguishing --archive-name (e.g. "
+                f"'Acme Battlespace Radar Damien Nguyen.pdf'), or "
+                f"--archive-overwrite to replace it deliberately"
+            )
         shutil.copy2(archive_pdf, dest)
         result["archived"] = str(dest)
 
@@ -133,6 +148,9 @@ def main() -> int:
     ap.add_argument("--archive-pdf", type=Path)
     ap.add_argument("--archive-dir", type=Path)
     ap.add_argument("--archive-name")
+    ap.add_argument("--archive-overwrite", action="store_true",
+                    help="replace an existing archived PDF of the same name "
+                         "(only for re-running the same posting)")
     ap.add_argument("--metric-event")
     ap.add_argument("--metric-json")
     ap.add_argument("--metrics-path", type=Path)
@@ -164,15 +182,19 @@ def main() -> int:
             print(f"error: --metric-json invalid: {exc}", file=sys.stderr)
             return 2
 
-    result = finalize(
-        args.bullets, args.case_path, args.knowledge_root, args.quality_out,
-        args.judge, args.plan, args.review_telemetry, args.repair_count,
-        args.routing_metrics, args.archive_pdf, args.archive_dir, args.archive_name,
-        args.metric_event, args.metric_json, args.metrics_path,
-        args.handoff_out, args.handoff_posting_url, args.handoff_jd_file,
-        args.handoff_tex, args.handoff_reviewer,
-        args.timer_skill, args.timer_scope, args.timer_label,
-    )
+    try:
+        result = finalize(
+            args.bullets, args.case_path, args.knowledge_root, args.quality_out,
+            args.judge, args.plan, args.review_telemetry, args.repair_count,
+            args.routing_metrics, args.archive_pdf, args.archive_dir, args.archive_name,
+            args.archive_overwrite, args.metric_event, args.metric_json, args.metrics_path,
+            args.handoff_out, args.handoff_posting_url, args.handoff_jd_file,
+            args.handoff_tex, args.handoff_reviewer,
+            args.timer_skill, args.timer_scope, args.timer_label,
+        )
+    except FileExistsError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     print(json.dumps(result, indent=2))
     return 0 if result["ok"] else 1
 
