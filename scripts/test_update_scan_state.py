@@ -40,13 +40,16 @@ class FreshStateFileTests(unittest.TestCase):
             state_file = os.path.join(tmp, "state.json")
             result = run_update([
                 "--board", "new-grad", "--simplify", simplify_json,
-                "--state-file", state_file,
+                "--state-file", state_file, "--now", "2026-09-24T00:00:00+00:00",
             ])
             self.assertEqual(result.returncode, 0, result.stderr)
             with open(state_file) as f:
                 state = json.load(f)
             self.assertEqual(state, {
-                "new-grad": {"simplify": {"swe": "https://a.com/swe1", "pm": "https://a.com/pm1"}}
+                "new-grad": {
+                    "simplify": {"swe": "https://a.com/swe1", "pm": "https://a.com/pm1"},
+                    "last_scan_at": "2026-09-24T00:00:00+00:00",
+                }
             })
 
     def test_creates_state_file_with_simplify_and_speedyapply(self):
@@ -210,6 +213,27 @@ class RoundtripTests(unittest.TestCase):
                 state = json.load(f)
             self.assertEqual(state["new-grad"]["simplify"], {"swe": "https://a.com/swe-top"})
             self.assertEqual(state["new-grad"]["speedyapply"], {"faang": "https://a.com/faang-top"})
+
+    def test_last_scan_at_is_recorded_and_overwritten(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state_file = os.path.join(tmp, "state.json")
+            with open(state_file, "w") as f:
+                json.dump({
+                    "new-grad": {"simplify": {"swe": "https://a.com/old-swe"},
+                                 "last_scan_at": "2026-09-20T00:00:00+00:00"}
+                }, f)
+
+            simplify_json = write_json(tmp, "simplify.json", {
+                "category_top": {"swe": "https://a.com/new-swe"},
+            })
+            result = run_update([
+                "--board", "new-grad", "--simplify", simplify_json,
+                "--state-file", state_file, "--now", "2026-09-24T21:08:30+00:00",
+            ])
+            self.assertEqual(result.returncode, 0, result.stderr)
+            with open(state_file) as f:
+                state = json.load(f)
+            self.assertEqual(state["new-grad"]["last_scan_at"], "2026-09-24T21:08:30+00:00")
 
     def test_missing_category_top_key_results_in_empty_update(self):
         with tempfile.TemporaryDirectory() as tmp:

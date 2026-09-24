@@ -16,6 +16,14 @@ speedyapply and speedyapply_ai are two distinct boards (2027-SWE-College-Jobs
 and 2027-AI-College-Jobs) and get separate state keys — merging them would
 let one board's cutoff silently truncate the other's.
 
+Also records `last_scan_at` (this run's UTC timestamp) at the board level.
+A marker can go stale the moment its posting scrolls off a fast-moving table
+(closed, filled, or just pushed down) before the next run — when that
+happens the parser falls back to a flat --days bound instead of a true
+"since last scan" cutoff. `last_scan_at` lets that fallback be computed from
+elapsed time since this run (see scan_fallback_days.py) instead of a fixed
+guess, so a same-day marker miss doesn't re-sweep two weeks of postings.
+
 Usage:
     update_scan_state.py --board new-grad --simplify s.json \
         [--speedyapply p.json] [--speedyapply-ai a.json] \
@@ -24,6 +32,7 @@ Usage:
 import argparse
 import json
 import os
+from datetime import datetime, timezone
 
 
 def main():
@@ -33,6 +42,7 @@ def main():
     ap.add_argument("--speedyapply", help="path to speedyapply (SWE board) parser's JSON output, if run")
     ap.add_argument("--speedyapply-ai", help="path to speedyapply (AI board) parser's JSON output, if run")
     ap.add_argument("--state-file", required=True)
+    ap.add_argument("--now", help="ISO timestamp to record as last_scan_at (default: current UTC time)")
     args = ap.parse_args()
 
     state = {}
@@ -55,6 +65,9 @@ def main():
         with open(args.speedyapply_ai, encoding="utf-8") as f:
             speedyapply_ai_top = json.load(f).get("section_top", {})
         board_state.setdefault("speedyapply_ai", {}).update(speedyapply_ai_top)
+
+    now = datetime.fromisoformat(args.now) if args.now else datetime.now(timezone.utc)
+    board_state["last_scan_at"] = now.isoformat()
 
     os.makedirs(os.path.dirname(args.state_file) or ".", exist_ok=True)
     with open(args.state_file, "w", encoding="utf-8") as f:
