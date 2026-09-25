@@ -33,11 +33,33 @@ python3 scripts/run_timer.py start apply --scope "$RUN_ID"
 
 **First check for a verified handoff from a tailor that already ran for this
 posting** — job-scan's fan-out tailors once and writes
-`build/$SLUG.handoff.json`:
+`build/$SLUG.handoff.json`. Pass `--jd-file` so the JD content itself, not
+just the posting URL, is re-verified — without it, `verify` falls back to a
+posting-URL-only check and JD drift can't be caught. Resolve the JD path in
+this order before calling `verify`:
+
+1. If `build/$SLUG.handoff.json` already exists, read its `jd_path` field
+   (recorded at write time by `resume_handoff.py write`) and use that path —
+   it's the exact file that was hashed into the manifest.
+2. Otherwise, if this run is part of the same session's job-scan fan-out and
+   `<scratchpad>/jds/$SLUG.txt` (the Step 2.5 JD cache, per `tailor-resume`
+   SKILL.md) exists, use that path.
+3. Otherwise, there is no JD path to pass — call `verify` without
+   `--jd-file` (it logs the fallback; see below) and proceed straight to
+   tailoring in that case anyway, since a fresh JD was never fetched here to
+   compare against.
 
 ```bash
-python3 scripts/resume_handoff.py verify \
-  --manifest build/$SLUG.handoff.json --posting-url "<job URL>"
+JD_PATH=$(python3 -c "import json,sys; print(json.load(open('build/$SLUG.handoff.json')).get('jd_path',''))" 2>/dev/null)
+[ -z "$JD_PATH" ] && [ -f "<scratchpad>/jds/$SLUG.txt" ] && JD_PATH="<scratchpad>/jds/$SLUG.txt"
+if [ -n "$JD_PATH" ]; then
+  python3 scripts/resume_handoff.py verify \
+    --manifest build/$SLUG.handoff.json --posting-url "<job URL>" --jd-file "$JD_PATH"
+else
+  echo "apply: no JD path available for handoff verify — falling back to posting-URL-only check" >&2
+  python3 scripts/resume_handoff.py verify \
+    --manifest build/$SLUG.handoff.json --posting-url "<job URL>"
+fi
 ```
 
 - **Exit 0** → the manifest's `pdf` is the tailored, gate-passed PDF for this
@@ -49,10 +71,15 @@ python3 scripts/resume_handoff.py verify \
   check, and archive. Its Step 7 writes `build/$SLUG.handoff.json`; verify that
   manifest before continuing.
 
-Never tailor off a stale build: the manifest hashes the JD, PDF, `.tex`, and
-final gate, so a mismatch means "tailor again," not "trust it." That skill
-names its working files `build/<slug>.*` per job — do not reintroduce a shared
-`build/resume.pdf`.
+Never tailor off a stale build: the manifest records the JD's path and a
+normalized content hash (not raw bytes — a fresh fetch is rarely
+byte-stable) alongside the PDF, `.tex`, and final-gate hashes, so a mismatch
+in any of them means "tailor again," not "trust it." When `--jd-file` isn't
+passed (no path was resolvable above, or an older caller), `verify` falls
+back to today's posting-URL-only check and logs that fallback to stderr —
+don't treat that log line as noise; it means JD drift was not checked this
+run. That skill names its working files `build/<slug>.*` per job — do not
+reintroduce a shared `build/resume.pdf`.
 
 ```bash
 python3 scripts/run_timer.py mark apply tailor --scope "$RUN_ID"
