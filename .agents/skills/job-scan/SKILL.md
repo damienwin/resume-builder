@@ -160,22 +160,35 @@ wait
 **`--since-last-scan` mode**: read `knowledge/job_scan_state.json`'s
 `<board>.simplify`, `<board>.speedyapply`, and `<board>.speedyapply_ai`
 objects (missing file or missing board key → treat as `{}`) and pass each as
-`--since-json`, still with a `--days` fallback bound (14) for any
-category/section with no marker yet (new board, or a category that surfaced
-nothing last run):
+`--since-json`, still with a `--days` fallback bound for any category/section
+with no marker yet (new board, a category that surfaced nothing last run, or
+a marker whose posting scrolled off the board before this run — closed,
+filled, or just pushed down a fast-moving table like speedyapply's).
+
+That fallback bound is **not** a flat guess — it's computed from the board's
+recorded `last_scan_at` timestamp (elapsed time since that scan, plus a
+2-day grace period, capped at 14 days so a long-unscanned or never-scanned
+board still gets a sane ceiling). A flat 14-day fallback used to fire on
+*every* marker miss regardless of how recently the board was actually
+scanned, which could re-surface up to two weeks of postings — most of it
+already shown in the previous run — the moment a single fast-moving marker
+aged off. `scan_fallback_days.py` computes it:
 
 ```bash
+FALLBACK_DAYS=$(python3 scripts/scan_fallback_days.py \
+  --state-file knowledge/job_scan_state.json --board <board>)
+
 SIMPLIFY_SINCE=$(python3 -c "import json;print(json.dumps(json.load(open('knowledge/job_scan_state.json')).get('<board>',{}).get('simplify',{})))" 2>/dev/null || echo '{}')
 SPEEDY_SINCE=$(python3 -c "import json;print(json.dumps(json.load(open('knowledge/job_scan_state.json')).get('<board>',{}).get('speedyapply',{})))" 2>/dev/null || echo '{}')
 SPEEDY_AI_SINCE=$(python3 -c "import json;print(json.dumps(json.load(open('knowledge/job_scan_state.json')).get('<board>',{}).get('speedyapply_ai',{})))" 2>/dev/null || echo '{}')
 
 python3 scripts/parse_simplify_jobs.py <scratchpad>/simplify.md \
-  --categories <active flags> --days 14 --since-json "$SIMPLIFY_SINCE" > <scratchpad>/s.json &
+  --categories <active flags> --days "$FALLBACK_DAYS" --since-json "$SIMPLIFY_SINCE" > <scratchpad>/s.json &
 python3 scripts/parse_speedyapply_jobs.py <scratchpad>/speedyapply.md \
-  --categories <same> --days 14 --since-json "$SPEEDY_SINCE" \
+  --categories <same> --days "$FALLBACK_DAYS" --since-json "$SPEEDY_SINCE" \
   --source-name speedyapply --default-category swe > <scratchpad>/p.json &
 python3 scripts/parse_speedyapply_jobs.py <scratchpad>/speedyapply_ai.md \
-  --categories <same> --days 14 --since-json "$SPEEDY_AI_SINCE" \
+  --categories <same> --days "$FALLBACK_DAYS" --since-json "$SPEEDY_AI_SINCE" \
   --source-name speedyapply_ai --default-category dsa > <scratchpad>/pai.json &
 wait
 ```
@@ -435,7 +448,8 @@ uncapped.
   giving one merged number.
 - The recency mode used: the day window and its resolved cutoff date for
   `--days`, or "since last scan" for `--since-last-scan` (and if any
-  category/section had no marker and fell back to the 14-day bound, say so).
+  category/section had no marker and fell back to `$FALLBACK_DAYS`, say so
+  and give that computed value, not a flat "14 days").
 - Closed postings excluded, cross-source duplicates dropped, and
   already-applied entries dropped — each only if nonzero. Don't pad the
   report with zero-count lines.
@@ -474,7 +488,7 @@ manifest is unavailable rather than estimating it.
 ```bash
 python3 scripts/log_metric.py job_scan '{
   "board": "<new-grad|internship>", "categories": ["swe", ...],
-  "recency": "<since-last-scan|days>", "days": <N, or the 14 fallback bound>,
+  "recency": "<since-last-scan|days>", "days": <N, or the computed fallback bound>,
   "scanned": <N>, "scanned_simplify": <N>, "scanned_speedyapply": <N or omit>,
   "scanned_speedyapply_ai": <N or omit>,
   "closed_excluded": <N>, "cross_source_dropped": <N or omit if 0>,
