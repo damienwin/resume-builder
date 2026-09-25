@@ -244,3 +244,48 @@ After the nine-run pilot, repeat the top two models per stage twice on two cases
 Adopt the fastest model whose success rate is at least 90%, has no factual hard
 failures, and remains within five quality points of the best model. Use a
 different model for final review than the one that authored the resume.
+
+## Phase 4 measurement protocol
+
+Phase 4 of the efficiency-improvement effort compares a proposed change
+against the current behavior (an "arm") on latency, tokens, and cost. The
+Phase 3 baseline's own numbers turned out untrustworthy on inspection — its
+r2 runs reused r1's already-validated draft content instead of generating
+fresh content, so they measured warm-cache/no-repair behavior, not
+independent samples, and within-case spread already reached ~28% at n=1-2.
+That's not enough signal to apply a ≥10% keep/reject rule to. Every Phase 4
+before/after comparison follows this protocol instead:
+
+- **At least 3 cold runs per case per arm.** "Cold" means no reuse of a
+  prior run's validated output — each run regenerates its own JD extraction,
+  selection, and bullet content from scratch. A run that short-circuits
+  because it found already-validated content from an earlier attempt does
+  not count as an independent sample.
+- **Interleave arms**, not block them (arm A run 1, arm B run 1, arm A run 2,
+  ...). Running all of one arm's samples first and then all of the other's
+  confounds the comparison with whatever else changed over that time window
+  (model updates, system load, knowledge/ edits).
+- **Same commit apart from the change under test.** Don't compare a
+  before-run on an old commit against an after-run that also picked up
+  unrelated fixes landed in between.
+- **No content reuse across runs being compared.** Use `scripts/model_eval.py
+  start`/`finish` (or the equivalent for a non-bakeoff run) so each run's
+  artifacts and telemetry are independently recorded, and don't hand a later
+  run the previous run's draft as a starting point.
+- **Exclude, don't delete, an invalid run.** If a run turns out to be
+  unusable (crashed, wrong fixture, manual interruption), record it with
+  `scripts/model_eval.py exclude --run-id ... --reason ...` (bakeoff runs)
+  or a `run_exclusion` event via `scripts/log_metric.py run_exclusion
+  '{"run_id": "...", "reason": "..."}'` (production runs.jsonl runs) instead
+  of deleting the record — the raw event stays in the append-only log for
+  audit, and `model_eval.py aggregate()` / `build_run_metrics.py` /
+  `metrics_summary.py --perf`/`--ab` / `build_metrics_dashboard.py` all skip
+  it the same way.
+- **Status-aware aggregation.** `model_eval.py report` only feeds
+  `p50_latency_s`/cost from `status: success` runs into the medians by
+  default — a failed or partial run's latency is often an early-abort
+  artifact, not a real measurement of the thing being compared. Pass
+  `--include-failed` when failure behavior itself is what's being measured.
+- **Report n, not just the point estimate.** State how many cold runs fed
+  each number in this document and in any Phase 4 write-up; a ≥10%
+  keep-rule decision on n=1 is not a decision, it's a coin flip.

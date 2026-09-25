@@ -43,6 +43,8 @@ def percentile(values: list[float], q: float) -> float:
 def print_perf_table(runs: list[dict], label: str = "") -> None:
     if label:
         print(f"\n=== {label} ===")
+    excluded_count = sum(1 for r in runs if r.get("excluded"))
+    runs = [r for r in runs if not r.get("excluded")]
     by_skill: dict[str, list[dict]] = defaultdict(list)
     for r in runs:
         if r.get("duration_s") is not None:
@@ -50,6 +52,8 @@ def print_perf_table(runs: list[dict], label: str = "") -> None:
 
     if not by_skill:
         print("  no runs with measured duration in this slice")
+        if excluded_count:
+            print(f"  ({excluded_count} run(s) excluded via run_exclusion events)")
         return
 
     header = f"{'skill':22}{'runs':>6}{'p50_s':>9}{'p95_s':>9}{'mean_out_tok':>14}{'mean_cost_usd':>15}{'cache_hit%':>12}"
@@ -71,6 +75,8 @@ def print_perf_table(runs: list[dict], label: str = "") -> None:
 
     covered = sum(1 for r in runs if r.get("tokens") is not None)
     print(f"\n{covered}/{len(runs)} run(s) had token coverage from Claude Code transcripts.")
+    if excluded_count:
+        print(f"({excluded_count} run(s) excluded via run_exclusion events, not counted above.)")
 
     scan_runs = [r for r in runs if r.get("scan_type") and r.get("duration_s") is not None]
     if scan_runs:

@@ -18,7 +18,15 @@ absorbs any nested tailor-resume turns in that window. Those nested turns
 are still emitted as their own tailor-resume record (flagged nested_in) but
 excluded from top-level apply-vs-tailor-resume sums so nothing double counts.
 
-Safe to delete and regenerate: knowledge/runs.jsonl is entirely derived.
+Safe to delete and regenerate: knowledge/runs.jsonl is entirely derived. That
+also means a run cannot be flagged "exclude this from perf stats" by editing
+a field directly in runs.jsonl — the next --rebuild would silently drop it.
+Instead, log a `run_exclusion` event to the append-only knowledge/metrics.jsonl
+(scripts/log_metric.py run_exclusion '{"run_id": "...", "reason": "..."}')
+and this script joins it back in on every regeneration, same as an anchor.
+scripts/metrics_summary.py (--perf/--ab) and scripts/build_metrics_dashboard.py
+read the same "excluded"/"exclude_reason" fields this script writes, so all
+three reporting paths agree on which runs are excluded.
 
 Usage:
     build_run_metrics.py [--rebuild] [--all-projects]
@@ -87,6 +95,35 @@ def load_anchors() -> list[dict]:
                 anchors.append(record)
     anchors.sort(key=lambda r: r["timestamp"])
     return anchors
+
+
+def load_exclusions() -> dict[str, str]:
+    """run_id -> most recent reason, from append-only `run_exclusion` events
+    in knowledge/metrics.jsonl.
+
+    Exclusions live here (not as a field written into runs.jsonl) because
+    this script fully regenerates runs.jsonl with "w" mode on every run —
+    anything stored only in that file would be erased on the next rebuild.
+    A later event for the same run_id (e.g. a corrected reason) wins; an
+    exclusion is never removed by this loader, only re-logged with a new
+    reason — un-excluding a run means the operator stops relying on the
+    latest event's reason, not deleting history.
+    """
+    if not METRICS_PATH.exists():
+        return {}
+    exclusions: dict[str, str] = {}
+    with METRICS_PATH.open() as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            record = json.loads(line)
+            if record.get("event") != "run_exclusion":
+                continue
+            run_id = record.get("run_id")
+            if run_id:
+                exclusions[run_id] = record.get("reason")
+    return exclusions
 
 
 def scan_type_label(anchor: dict) -> str:
@@ -161,7 +198,8 @@ def collect_run_turns(session_turns: list[Turn], anchor_dt, skill: str,
     return collected
 
 
-def build_runs(anchors: list[dict], all_turns: list[Turn]) -> list[dict]:
+def build_runs(anchors: list[dict], all_turns: list[Turn],
+                exclusions: dict[str, str] | None = None) -> list[dict]:
     turns_by_session: dict[str, list[Turn]] = defaultdict(list)
     for turn in all_turns:
         turns_by_session[turn.session_id].append(turn)
@@ -198,14 +236,18 @@ def build_runs(anchors: list[dict], all_turns: list[Turn]) -> list[dict]:
             if start_dt <= t.dt <= a_dt and t.skill == "tailor-resume":
                 absorbed_turn_ids.add((sid, t.timestamp, t.request_id or ""))
 
+    exclusions = exclusions or {}
     runs = []
     for idx, anchor in enumerate(anchors):
         skill = anchor["_skill"]
         anchor_dt = parse_ts(anchor["timestamp"])
         session_id = session_at_or_before(turns_by_session, anchor_dt)
 
+        run_id = f"{anchor.get('event')}-{anchor['timestamp']}"
         run = {
-            "run_id": f"{anchor.get('event')}-{anchor['timestamp']}",
+            "run_id": run_id,
+            "excluded": run_id in exclusions,
+            "exclude_reason": exclusions.get(run_id),
             "event": anchor.get("event"),
             "skill": skill,
             "ended_at": anchor["timestamp"],
@@ -327,7 +369,8 @@ def main():
 
     anchors = load_anchors()
     turns = load_turns(all_projects=args.all_projects, rebuild=args.rebuild)
-    runs = build_runs(anchors, turns)
+    exclusions = load_exclusions()
+    runs = build_runs(anchors, turns, exclusions)
 
     RUNS_PATH.parent.mkdir(parents=True, exist_ok=True)
     with RUNS_PATH.open("w") as f:

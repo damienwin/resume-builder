@@ -20,11 +20,33 @@ Parsing 285 MB of transcripts on every run is slow enough that nobody would run
 it, so results are cached per file in knowledge/.cc_transcript_cache.json and
 only bytes appended since the last pass are parsed. --rebuild forces a full
 re-read.
+
+## Subagent transcripts and attribution
+
+A subagent (a fork Claude Code dispatches mid-session — a review subagent,
+job-scan's fan-out, etc.) writes its own turns to
+<slug>/<session>/subagents/agent-*.jsonl, entirely separate from the parent
+session's own .jsonl. find_transcripts() now reads these files too, so their
+tokens are no longer invisible to load_turns()/the CLI summary above.
+
+Those turns carry `attributionSkill: None` (subagents don't get the outer
+session's skill tag), so they land in the "(none)" bucket here and are NOT
+attributed to any specific skill's run by scripts/build_run_metrics.py's
+skill-matching join (which requires `turn.skill == skill`). This was a
+deliberate choice over attempting time-window + originating-file heuristics
+to guess which run a subagent turn belongs to: a wrong guess would silently
+misattribute cost to the wrong skill, which is worse than an honest "not
+attributed." A Phase 4 comparison that needs subagent cost/tokens counted
+against a specific run must either (a) drive that run from a top-level
+session only (no subagent fan-out) so every turn keeps the run's skill tag,
+or (b) treat the subagent total as a repo-wide addendum, not a per-run
+figure, until a skill-tag-on-subagent mechanism exists upstream.
 """
 from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from dataclasses import dataclass, asdict
 from datetime import datetime
@@ -34,9 +56,25 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 CACHE_PATH = REPO_ROOT / "knowledge" / ".cc_transcript_cache.json"
 
 DEFAULT_TRANSCRIPT_ROOT = Path.home() / ".claude" / "projects"
-# The transcript directory for this repo: Claude Code slugifies the cwd by
-# replacing every path separator with a dash.
-THIS_PROJECT_SLUG = "-Users-damienwin-claude-projects-resume-builder"
+
+
+def slugify_path(path: Path) -> str:
+    """Claude Code's actual project-directory slugify rule: every
+    non-alphanumeric character (not just '/') maps to '-'.
+
+    A previous hardcoded slug here was stale — it named a directory from an
+    earlier checkout location. That stale directory still exists on disk, so
+    a "does the directory exist" check alone would never have caught the
+    bug: it silently read a different checkout's transcripts, not zero
+    transcripts. Deriving the slug from REPO_ROOT keeps it correct across
+    checkout moves/renames instead of needing a manual update each time.
+    """
+    return re.sub(r"[^A-Za-z0-9]", "-", str(path))
+
+
+# The transcript directory for this repo, derived the same way Claude Code
+# derives it from the cwd it was launched in.
+THIS_PROJECT_SLUG = slugify_path(REPO_ROOT)
 
 # Turns the model didn't actually produce (interrupts, local errors). They
 # carry no real usage and would pollute both latency and token totals.
@@ -147,11 +185,30 @@ def parse_transcript(path: Path, start_offset: int = 0) -> tuple[list[Turn], int
 
 
 def find_transcripts(root: Path, all_projects: bool) -> list[Path]:
+    """Every top-level session transcript, plus every subagent transcript
+    nested under it (<slug>/<session>/subagents/agent-*.jsonl).
+
+    Subagent-driven turns (a fork Claude Code dispatches mid-session, e.g.
+    job-scan's fan-out or a review subagent) are written to their own file
+    under the parent session's directory, entirely separate from the
+    session's own top-level .jsonl. The old glob only ever looked at
+    <slug>/*.jsonl, so every subagent turn was silently unread — this repo's
+    own transcript root has dozens of such files today.
+    """
     if not root.exists():
         return []
     if all_projects:
-        return sorted(root.glob("*/*.jsonl"))
-    return sorted((root / THIS_PROJECT_SLUG).glob("*.jsonl"))
+        project_dirs = [p for p in root.iterdir() if p.is_dir()]
+    else:
+        project_dirs = [root / THIS_PROJECT_SLUG]
+
+    found: list[Path] = []
+    for project_dir in project_dirs:
+        if not project_dir.exists():
+            continue
+        found.extend(project_dir.glob("*.jsonl"))
+        found.extend(project_dir.glob("*/subagents/agent-*.jsonl"))
+    return sorted(found)
 
 
 def load_cache() -> dict:

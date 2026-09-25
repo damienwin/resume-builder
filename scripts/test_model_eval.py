@@ -263,6 +263,44 @@ class ModelEvalTests(unittest.TestCase):
                 "checks": [{"check": "grounding", "ok": False, "severity": "info"}],
             })
 
+    def test_failed_run_excluded_from_latency_and_cost_by_default(self):
+        success_run = self.start_run()
+        self.store.finish_run(
+            success_run, "success", [self._pdf("success.pdf")], 100, 25, 5,
+            40, 10, None, "exact", 2, 0, 1, None,
+            latency_s=50.0, cost_usd=1.0,
+        )
+        failed_run = self.store.start_run(
+            "backend", "tailor-end-to-end", "example", "example-model",
+            "medium", "pilot-v1", self.store.eval_root / "cases" / "backend.txt",
+        )
+        self.store.finish_run(
+            failed_run, "failed", [self._pdf("failed.pdf")], None, None, None,
+            None, None, None, "unavailable", None, 0, 0, "aborted early",
+            latency_s=0.01, cost_usd=0.0001,
+        )
+
+        rows_default = self.store.aggregate()
+        self.assertEqual(len(rows_default), 1)
+        row = rows_default[0]
+        # both runs are still counted for success_rate...
+        self.assertEqual(row["runs"], 2)
+        self.assertEqual(row["success_rate"], 0.5)
+        # ...but the failed run's near-zero latency/cost must not drag the
+        # median/mean down by default.
+        self.assertEqual(row["p50_latency_s"], 50.0)
+        self.assertEqual(row["mean_cost_usd"], 1.0)
+
+        rows_included = self.store.aggregate(include_failed=True)
+        row_included = rows_included[0]
+        self.assertEqual(row_included["p50_latency_s"], 50.0)  # median of [0.01, 50.0]
+        self.assertAlmostEqual(row_included["mean_cost_usd"], (1.0 + 0.0001) / 2, places=3)
+
+    def _pdf(self, name):
+        path = self.repo_root / name
+        path.write_bytes(b"pdf")
+        return path
+
     def test_append_only_latency_correction_changes_aggregate(self):
         run_id = self.start_run()
         self.finish_run(run_id)

@@ -4,8 +4,14 @@ against cc_transcripts.py turns into knowledge/runs.jsonl.
 
 Run: python3 scripts/test_build_run_metrics.py
 """
+import io
+import json
+import tempfile
 import unittest
+from contextlib import redirect_stdout
+from pathlib import Path
 
+import build_run_metrics
 from build_run_metrics import (
     CACHE_READ_MULTIPLIER,
     CACHE_WRITE_1H_MULTIPLIER,
@@ -13,6 +19,8 @@ from build_run_metrics import (
     PRICING,
     build_runs,
     cost_for_turn,
+    load_anchors,
+    load_exclusions,
     scan_type_label,
 )
 from cc_transcripts import Turn
@@ -170,6 +178,110 @@ class BuildRunsTests(unittest.TestCase):
                            board="new-grad", categories=["swe", "quant"])]
         runs = build_runs(anchors, turns)
         self.assertEqual(runs[0]["scan_type"], "new-grad:swe+quant")
+
+
+class ExclusionTests(unittest.TestCase):
+    """Exclusions live as append-only `run_exclusion` events in
+    knowledge/metrics.jsonl, not as a field written into runs.jsonl — this
+    script fully regenerates runs.jsonl with "w" mode every run, so anything
+    stored only there would be lost on the next --rebuild."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        root = Path(self.tmp.name)
+        (root / "knowledge").mkdir()
+        self.metrics_path = root / "knowledge" / "metrics.jsonl"
+
+        self._orig_metrics_path = build_run_metrics.METRICS_PATH
+        build_run_metrics.METRICS_PATH = self.metrics_path
+        self.addCleanup(self._restore)
+
+    def _restore(self):
+        build_run_metrics.METRICS_PATH = self._orig_metrics_path
+
+    def _write_metrics(self, records):
+        with self.metrics_path.open("w") as f:
+            for r in records:
+                f.write(json.dumps(r) + "\n")
+
+    def test_exclusion_survives_a_full_regeneration(self):
+        anchor_record = {
+            "event": "resume_tailor",
+            "timestamp": "2026-08-12T00:02:00.000Z",
+            "company": "Acme",
+        }
+        run_id = "resume_tailor-2026-08-12T00:02:00.000Z"
+        self._write_metrics([
+            anchor_record,
+            {"event": "run_exclusion", "timestamp": "2026-08-12T00:03:00.000Z",
+             "run_id": run_id, "reason": "invalid fixture"},
+        ])
+
+        turns = [
+            Turn(session_id="s1", timestamp="2026-08-12T00:00:00.000Z",
+                 skill="tailor-resume", model="claude-opus-5", input_tokens=0,
+                 output_tokens=50, cache_write_5m=0, cache_write_1h=0,
+                 cache_read=0, request_id="r1", is_sidechain=False),
+        ]
+
+        # Regenerate twice, exactly as build_run_metrics.py main() does
+        # (load_anchors + load_exclusions + build_runs, from scratch each
+        # time) — the exclusion must show up identically both times, proving
+        # it isn't lost on the "regeneration" the module's own docstring
+        # calls out.
+        for _ in range(2):
+            anchors = load_anchors()
+            exclusions = load_exclusions()
+            runs = build_runs(anchors, turns, exclusions)
+            self.assertEqual(len(runs), 1)
+            self.assertTrue(runs[0]["excluded"])
+            self.assertEqual(runs[0]["exclude_reason"], "invalid fixture")
+
+    def test_unexcluded_run_is_not_flagged(self):
+        self._write_metrics([
+            {"event": "resume_tailor", "timestamp": "2026-08-12T00:02:00.000Z"},
+        ])
+        anchors = load_anchors()
+        exclusions = load_exclusions()
+        self.assertEqual(exclusions, {})
+        runs = build_runs(anchors, [], exclusions)
+        self.assertFalse(runs[0]["excluded"])
+        self.assertIsNone(runs[0]["exclude_reason"])
+
+    def test_metrics_summary_perf_honors_the_same_exclusion(self):
+        # metrics_summary.py --perf reads knowledge/runs.jsonl (the output of
+        # this script) and must drop the same run this script flagged, so
+        # both reporting paths agree on what counts.
+        import metrics_summary
+
+        anchor_record = {
+            "event": "resume_tailor",
+            "timestamp": "2026-08-12T00:02:00.000Z",
+        }
+        run_id = "resume_tailor-2026-08-12T00:02:00.000Z"
+        self._write_metrics([
+            anchor_record,
+            {"event": "run_exclusion", "timestamp": "2026-08-12T00:03:00.000Z",
+             "run_id": run_id, "reason": "bad run"},
+        ])
+        turns = [
+            Turn(session_id="s1", timestamp="2026-08-12T00:00:00.000Z",
+                 skill="tailor-resume", model="claude-opus-5", input_tokens=0,
+                 output_tokens=50, cache_write_5m=0, cache_write_1h=0,
+                 cache_read=0, request_id="r1", is_sidechain=False),
+        ]
+        anchors = load_anchors()
+        exclusions = load_exclusions()
+        runs = build_runs(anchors, turns, exclusions)
+        self.assertTrue(runs[0]["excluded"])
+
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            metrics_summary.print_perf_table(runs)
+        output = buf.getvalue()
+        self.assertIn("no runs with measured duration in this slice", output)
+        self.assertIn("1 run(s) excluded via run_exclusion events", output)
 
 
 if __name__ == "__main__":
