@@ -337,6 +337,33 @@ Read `templates/jakes_resume.tex` and fill every `<<PLACEHOLDER>>` into
   what the layout actually requires is evidence given away for free. Aim for
   the longest left side that compiles clean, not the shortest one that
   obviously will.
+  - **Write the first draft of the left side conservatively, not from the
+    full `tech:` array.** Cold-run measurement (`build/*.repair_log.json`
+    across the frozen eval cases) found `overfull` and the resulting
+    `page_count` overflow were, by a wide margin, the most common reasons a
+    run needed any recompile at all — and every observed case traced to a
+    project row where the *initial* draft pasted the full frontmatter
+    `tech:` list plus a title parenthetical, guaranteeing a repair before
+    even reaching Step 6. Skip that guaranteed-fail first draft: for any
+    project whose `repo:`/`demo:` link is long, open with 2-3 of the most
+    JD-relevant tech items and no title parenthetical, then use the spare
+    room a clean first compile leaves (state below is well under the fill
+    band) to add items back — same "longest side that compiles clean" goal,
+    reached by expanding a row that already passed instead of shrinking one
+    that already failed.
+  **Do not also switch to tightened itemsep spacing as a first-draft
+  default to "make extra room."** That was tried in the same measurement
+  round (proactively applying Step 6's `itemsep=1pt, topsep=2pt, parsep=0pt`
+  remedy from the first draft, instead of only after a page-count failure)
+  and traded one defect class for a worse one: `overfull`/`page_count`
+  failures dropped to zero, but every single cold run then under-filled
+  (`fill` check, all landing 690-715 against a >=720 floor) and needed a
+  content-adding repair anyway — the fill-failure rate went from 0-of-3 runs
+  to 3-of-3. Net repair attempts per run did drop on average, but at the
+  cost of trading the one defect class this rule exists to reduce for the
+  one Step 6 already calls "the most common defect in this repo's output."
+  Leave the itemsep tightening as Step 6's reactive remedy only, and rely on
+  writing the conservative first draft above instead.
 
 Mark the render step finished so the .tex authoring time is measured apart
 from compile and verification:
@@ -350,6 +377,7 @@ python3 scripts/run_timer.py mark tailor-resume render --scope "$RUN_ID"
 ```bash
 python3 scripts/compile_verify.py build/$SLUG.tex build/$SLUG.pdf \
   --log build/$SLUG.tectonic.log --json-out build/$SLUG.verify.json \
+  --repair-log build/$SLUG.repair_log.json \
   --timer-skill tailor-resume --timer-scope "$RUN_ID" --timer-label compile_verify
 ```
 
@@ -358,9 +386,15 @@ code is authoritative), writes the log, runs every `verify_resume_pdf.py`
 check, and exits nonzero if either step failed. (Tectonic pulls packages on
 demand. Missing tools: `brew install tectonic`, `brew install poppler`.)
 
-On any failure, fix the `.tex` and rerun `compile_verify.py` with
-`--timer-label repair`, so the repair loop is timed separately from the first
-pass.
+**Always pass `--repair-log build/$SLUG.repair_log.json`, on every call in
+this step including repairs.** `--json-out` is overwritten on each recompile
+and only ever shows the last attempt; `--repair-log` appends instead, so it's
+the only record of which checks actually failed across this run's repair
+loop. It's what lets a future run derive real heuristics instead of guessing.
+
+On any failure, fix the `.tex` and rerun `compile_verify.py` (same
+`--repair-log` path) with `--timer-label repair`, so the repair loop is timed
+separately from the first pass.
 
 **`verify_resume_pdf.py` exists because page count alone is not proof of
 completeness.** Observed live 2026-09-01 (Idler tailoring run): an
@@ -450,7 +484,7 @@ fix the `.tex`, recompile, and re-verify on any failure.
    it isn't one.
 
 Compilation errors → read the output, fix the `.tex`, rerun `compile_verify.py`
-with `--timer-label repair`.
+with `--timer-label repair` (same `--repair-log build/$SLUG.repair_log.json`).
 
 ## Step 6b — One final semantic/readability review (optional, default off)
 

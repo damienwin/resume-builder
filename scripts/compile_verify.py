@@ -27,6 +27,52 @@ from pathlib import Path
 from verify_resume_pdf import verify
 
 
+def failing_checks(report: dict) -> list[str]:
+    """Names of the checks that failed on this one compile attempt.
+
+    Includes "compile" itself (tectonic non-zero exit / timeout / missing
+    binary) ahead of any verify-stage check names, so a compile-error attempt
+    still logs something instead of an empty list.
+    """
+    names: list[str] = []
+    compile_info = report.get("compile")
+    if compile_info is not None and not compile_info.get("ok"):
+        names.append("compile")
+    for check in report.get("checks", []):
+        if not check.get("ok") and check.get("check") not in names:
+            names.append(check["check"])
+    return names
+
+
+def record_repair_log(log_path: Path, report: dict) -> dict:
+    """Append this attempt's failing-check names to `log_path`, accumulating.
+
+    `build/$SLUG.verify.json` (the `--json-out` file) is overwritten on every
+    recompile within a run, so it can never answer "which checks have failed
+    across this run's repair loop" — only "which failed on the LAST attempt".
+    This mirrors run_timer.py's fix for the same shape of bug (a later event
+    silently clobbering an earlier one instead of accumulating): read the
+    existing attempts list, append one record for THIS attempt, write the
+    whole list back. A missing or corrupt file starts a fresh list rather
+    than raising — logging must never fail the compile/verify call itself.
+    """
+    try:
+        attempts = json.loads(log_path.read_text(encoding="utf-8"))
+        if not isinstance(attempts, list):
+            attempts = []
+    except (OSError, json.JSONDecodeError):
+        attempts = []
+
+    names = failing_checks(report)
+    attempts.append({
+        "attempt": len(attempts) + 1,
+        "ok": bool(report.get("ok")),
+        "failing_checks": names,
+    })
+    log_path.write_text(json.dumps(attempts, indent=2) + "\n", encoding="utf-8")
+    return {"attempts": attempts}
+
+
 def compile_and_verify(tex: Path, pdf: Path, log: Path, min_fill: float = 720.0,
                        tectonic: str = "tectonic", timeout: float = 180.0) -> dict:
     if shutil.which(tectonic) is None:
@@ -75,6 +121,10 @@ def main() -> int:
     ap.add_argument("--tectonic", default="tectonic")
     ap.add_argument("--timeout", type=float, default=180.0)
     ap.add_argument("--json-out", type=Path)
+    ap.add_argument("--repair-log", type=Path,
+                    help="Path to accumulate this run's per-attempt failing "
+                         "check names into (appends; survives recompiles). "
+                         "Typically build/$SLUG.repair_log.json.")
     ap.add_argument("--timer-skill")
     ap.add_argument("--timer-scope", default="")
     ap.add_argument("--timer-label", default="compile_verify")
@@ -90,6 +140,8 @@ def main() -> int:
 
     if args.json_out:
         args.json_out.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    if args.repair_log:
+        record_repair_log(args.repair_log, report)
     if args.timer_skill:
         import run_timer
         run_timer.mark(args.timer_skill, args.timer_label, args.timer_scope)
