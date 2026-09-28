@@ -347,15 +347,26 @@ python3 scripts/run_timer.py mark tailor-resume render --scope "$RUN_ID"
 
 ## Step 6 — Compile and verify (one pass)
 
+**First, write the auditable keyword-selection file** — this is the one part
+of Step 6 that stays agent judgment, not something a script can select for
+you. Read the JD once more and write every *required* JD skill/term the
+knowledge base truthfully supports, one per line, to
+`build/$SLUG.keywords.txt`. A script checking substrings from a list only
+gives false assurance if the list itself is incomplete or wrong — the
+selection judgment stays yours; the script below only confirms the file
+exists and is non-empty, as an audit trail, never as a substitute for your
+read of the JD.
+
 ```bash
 python3 scripts/compile_verify.py build/$SLUG.tex build/$SLUG.pdf \
   --log build/$SLUG.tectonic.log --json-out build/$SLUG.verify.json \
+  --keywords build/$SLUG.keywords.txt \
   --timer-skill tailor-resume --timer-scope "$RUN_ID" --timer-label compile_verify
 ```
 
 One subprocess compiles with tectonic (no shell pipe, so tectonic's own exit
 code is authoritative), writes the log, runs every `verify_resume_pdf.py`
-check, and exits nonzero if either step failed. (Tectonic pulls packages on
+check, and exits nonzero if any step failed. (Tectonic pulls packages on
 demand. Missing tools: `brew install tectonic`, `brew install poppler`.)
 
 On any failure, fix the `.tex` and rerun `compile_verify.py` with
@@ -375,16 +386,23 @@ one actually appears in the extracted PDF text — not just "page count is
 1." Treat a `completeness` failure exactly like a compile error: something
 that should be on the page isn't, full stop.
 
-It also automates checks 1, 6, and 7 below (page count, fill measurement,
-overfull-hbox, placeholders, header) plus the new completeness check above.
-Exit code nonzero means at least one check failed — read its per-check
-output (or `--json` for a machine-readable report), fix the `.tex`,
-recompile, and rerun it. It does **not** cover checks 2, 3, 4, or 5 —
-clean extraction, reading order, keyword coverage, and link visibility all
-need a truthful read of the actual JD and the extracted text, which is
-exactly the judgment a script can't make. `mdls -name kMDItemNumberOfPages
-build/$SLUG.pdf` still works as a spot-check on macOS if you want a second
-page-count source.
+It also automates checks 1, 2, 3, 5, 6, and 7 below (page count, fill
+measurement, clean extraction, reading order, link visibility, overfull-hbox,
+placeholders, header) plus the completeness check above, and — only when
+`--keywords` is passed — confirms the keyword-selection file from the step
+above exists and is non-empty. Exit code nonzero means at least one check
+failed — read its per-check output (or `--json` for a machine-readable
+report), fix the `.tex`, recompile, and rerun it. **Checks 2, 3, and 5 are
+scripted against RAW `-layout` extraction on purpose** — normalizing
+dashes/quotes before comparing would hide exactly the garbling those checks
+exist to catch — so a script failure there means the real PDF text is
+broken, not a false alarm to second-guess. It still does **not** cover check
+4, keyword *coverage* — whether the keywords you selected genuinely appear,
+verbatim, in the rendered text — because that needs the same truthful read
+of the JD and extraction the selection step above required; the script only
+confirms you wrote the list down, never that it's right. `mdls -name
+kMDItemNumberOfPages build/$SLUG.pdf` still works as a spot-check on macOS if
+you want a second page-count source.
 
 Check all eight below against the extracted text and the script's report;
 fix the `.tex`, recompile, and re-verify on any failure.
@@ -413,19 +431,26 @@ fix the `.tex`, recompile, and re-verify on any failure.
      role. Roughly 12pt per bullet line, 37pt per project block (heading +
      2 bullets). Re-measure after each addition; stop once past 740.
    - Adding a **4th experience is never the way to fill space** — see Step 3.
-2. **Clean extraction** — grep the `-layout` output for every metric;
-   nothing glued or garbled. Reword rather than fight the font.
-3. **Reading order** — the no-`-layout` output reads header → education →
+2. **Clean extraction** (automated above — `clean_extraction`). Every
+   numeric token in a declared bullet must survive raw `-layout` extraction
+   unglued and unbroken. A failure names the missing/garbled token(s) —
+   reword rather than fight the font, and recompile.
+3. **Reading order** (automated above — `reading_order`). Section headings
+   must appear, in the extracted text, in template order: education →
    experience → projects → skills.
-4. **Keyword coverage** — every *required* JD skill the knowledge base
-   truthfully supports appears verbatim. Work any missing supported one into
-   skills or a bullet and recompile. Unsupported skills are Step 8 gaps,
-   never additions.
-5. **Link visibility** — for every project with `repo:`/`demo:`, grep the
-   `-layout` output for the exact displayed URL. Each must appear verbatim
-   and unbroken — not hyphen-split across a wrap, not glued to neighboring
-   text. If it wraps, is missing, or collides, shorten the title/tech-stack
-   (never the URL) per Step 5 and recompile.
+4. **Keyword coverage** — *selection* was already recorded in
+   `build/$SLUG.keywords.txt` above (that file's presence is scripted —
+   `keyword_list` — but the selection itself is not). Now confirm coverage
+   by eye: every keyword in that file must appear verbatim in the extracted
+   text. Work any missing-but-truthfully-supported one into skills or a
+   bullet and recompile. Unsupported skills are Step 8 gaps, never additions
+   — never add a keyword to the file that the knowledge base doesn't
+   actually support just to make this check easier.
+5. **Link visibility** (automated above — `link_visibility`). Every
+   `repo:`/`demo:` display string must appear verbatim and unbroken in raw
+   `-layout` extraction — not hyphen-split across a wrap, not glued to
+   neighboring text. A failure names the broken link(s); shorten the
+   title/tech-stack (never the URL) per Step 5 and recompile.
 6. **No overfull-hbox warnings** (automated above — `overfull`) on any
    `\resumeSubheading` or `\resumeProjectHeading` line. This is the Step 5
    overflow bug, not cosmetic noise.

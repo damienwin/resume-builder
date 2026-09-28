@@ -30,6 +30,24 @@ fails loudly when they disagree.
   7. date_ranges     — every date range in the extracted text is split by an
                        ASCII hyphen, not an en/em dash (`--` in LaTeX), which
                        Workday-style resume importers fail to parse
+  8. clean_extraction — every numeric token in a declared bullet appears in
+                       the RAW `-layout` extraction (not the normalize()'d
+                       text used elsewhere), since normalize() folds
+                       dashes/quotes and would hide exactly the font/kerning
+                       garbling this check exists to catch
+  9. reading_order   — section headings (Education, Experience, Projects,
+                       Technical Skills) appear in that template order in
+                       the extracted text
+ 10. link_visibility — every `\href{...}{DISPLAY}` display string (the
+                       project `repo:`/`demo:` link text) appears verbatim
+                       and unbroken in the raw `-layout` extraction — not
+                       hyphen-split across a wrap, not glued to neighboring
+                       text
+ 11. keyword_list    — (only if `--keywords PATH` is passed) the agent's
+                       JD-keyword selection file exists and is non-empty.
+                       Keyword *selection* stays agent judgment — this only
+                       confirms the audit trail exists, it never picks or
+                       checks coverage of the keywords itself.
 
 Exit status is 0 only when every check passes; 1 otherwise. `--json` prints
 a machine-readable report. Needs `pdftotext` and `pdfinfo` (poppler).
@@ -179,6 +197,98 @@ def non_ascii_date_ranges(raw_text: str) -> list[str]:
     return [re.sub(r"\s+", " ", m.group(0)) for m in _BAD_DATE_RANGE.finditer(raw_text)]
 
 
+_SECTION_ORDER = ["Education", "Experience", "Projects", "Technical Skills"]
+
+
+def reading_order_issues(raw_text: str) -> list[str]:
+    """Section headings must appear, in template order, in the extracted text.
+
+    Checked against the plain (no `-layout`) extraction, mirroring the
+    manual instruction this replaces ("the no-`-layout` output reads
+    header -> education -> experience -> projects -> skills").
+    """
+    positions: list[tuple[int, str]] = []
+    for name in _SECTION_ORDER:
+        idx = raw_text.find(name)
+        if idx == -1:
+            positions.append((-1, name))
+        else:
+            positions.append((idx, name))
+    missing = [name for idx, name in positions if idx == -1]
+    if missing:
+        return [f"heading(s) not found in extracted text: {missing}"]
+    found_order = [name for _, name in sorted(positions)]
+    if found_order != _SECTION_ORDER:
+        return [f"out of order: found {found_order}, expected {_SECTION_ORDER}"]
+    return []
+
+
+def _bounded_present(needle: str, haystack: str, is_boundary_char) -> bool:
+    """`needle` appears in `haystack` as a contiguous substring, not glued.
+
+    "Glued" means a boundary-class character (e.g. alnum for a URL, digit
+    for a number) sits immediately before/after the match — that would mean
+    the needle is stuck to unrelated neighboring text rather than standing
+    on its own, exactly what "verbatim and unbroken" rules out. A wrap or
+    hyphen-split inserted *inside* the needle already fails the plain
+    substring test, since it breaks contiguity.
+    """
+    if not needle:
+        return False
+    for m in re.finditer(re.escape(needle), haystack):
+        i, j = m.start(), m.end()
+        left_ok = i == 0 or not is_boundary_char(haystack[i - 1])
+        right_ok = j == len(haystack) or not is_boundary_char(haystack[j])
+        if left_ok and right_ok:
+            return True
+    return False
+
+
+def link_display_texts(tex: str) -> list[str]:
+    """The visible display text of every `\\href{url}{DISPLAY}` in the body."""
+    start = tex.find(r"\begin{document}")
+    body = tex[start:] if start != -1 else tex
+    body = re.sub(r"(?m)(?<!\\)%.*$", "", body)
+    out = []
+    for m in re.finditer(r"\\href\{[^}]*\}\{((?:[^{}]|\{[^}]*\})*)\}", body):
+        display = m.group(1).strip()
+        if display:
+            out.append(display)
+    return out
+
+
+def link_visibility_issues(tex: str, layout_text: str) -> list[str]:
+    """Every href display string (repo:/demo: link text) rendered verbatim."""
+    return [
+        display
+        for display in link_display_texts(tex)
+        if not _bounded_present(display, layout_text, str.isalnum)
+    ]
+
+
+_NUM_TOKEN = re.compile(r"\d[\d,.]*(?:%|x)?")
+
+
+def clean_extraction_issues(bullets: list[str], layout_text: str) -> list[str]:
+    """Every numeric token in a declared bullet must survive raw extraction.
+
+    `layout_text` must be the RAW `-layout` pdftotext output, not
+    normalize()'d text — normalization folds dashes/quotes and would hide
+    exactly the garbling (glued/split digits, dropped chars) this exists to
+    catch.
+    """
+    missing: list[str] = []
+    seen: set[str] = set()
+    for bullet in bullets:
+        for tok in _NUM_TOKEN.findall(bullet):
+            if tok in seen:
+                continue
+            seen.add(tok)
+            if not _bounded_present(tok, layout_text, str.isdigit):
+                missing.append(tok)
+    return missing
+
+
 def measure_fill(pdf: Path) -> float | None:
     try:
         out = _run(["pdftotext", "-bbox", str(pdf), "-"])
@@ -198,7 +308,7 @@ def page_count(pdf: Path) -> int | None:
 
 
 def verify(tex_path: Path, pdf_path: Path, log_path: Path | None,
-           min_fill: float) -> dict:
+           min_fill: float, keywords_path: Path | None = None) -> dict:
     tex = tex_path.read_text(encoding="utf-8", errors="replace")
     try:
         raw_text = _run(["pdftotext", str(pdf_path), "-"])
@@ -210,6 +320,10 @@ def verify(tex_path: Path, pdf_path: Path, log_path: Path | None,
             "checks": [{"check": "extraction", "ok": False,
                         "detail": f"pdftotext failed: {e}"}],
         }
+    try:
+        layout_text = _run(["pdftotext", "-layout", str(pdf_path), "-"])
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        layout_text = ""
     text = normalize(raw_text)
 
     checks: list[dict] = []
@@ -269,6 +383,53 @@ def verify(tex_path: Path, pdf_path: Path, log_path: Path | None,
         "all ASCII-hyphen" if not bad_dates
         else f"{len(bad_dates)} use a Unicode dash (write `-`, not `--`): {bad_dates[:3]}")
 
+    missing_tokens = clean_extraction_issues(bullets, layout_text)
+    add(
+        "clean_extraction",
+        not missing_tokens,
+        "all numeric tokens present in raw extraction" if not missing_tokens
+        else f"{len(missing_tokens)} numeric token(s) missing/garbled in raw "
+             f"-layout extraction: {missing_tokens[:5]}",
+    )
+
+    order_issues = reading_order_issues(raw_text)
+    add(
+        "reading_order",
+        not order_issues,
+        "header -> education -> experience -> projects -> skills" if not order_issues
+        else "; ".join(order_issues),
+    )
+
+    link_issues = link_visibility_issues(tex, layout_text)
+    n_links = len(link_display_texts(tex))
+    add(
+        "link_visibility",
+        not link_issues,
+        (f"no links declared" if n_links == 0
+         else f"all {n_links} link(s) verbatim and unbroken") if not link_issues
+        else f"{len(link_issues)}/{n_links} link(s) broken/glued/garbled: {link_issues}",
+    )
+
+    if keywords_path is not None:
+        if not keywords_path.exists():
+            add(
+                "keyword_list",
+                False,
+                f"missing: {keywords_path} — write the agent's chosen JD-keyword "
+                "list here before verifying (keyword selection stays agent "
+                "judgment; this only confirms the audit trail exists)",
+            )
+        else:
+            kw_text = keywords_path.read_text(encoding="utf-8", errors="replace")
+            keywords = [ln.strip() for ln in kw_text.splitlines() if ln.strip()]
+            add(
+                "keyword_list",
+                bool(keywords),
+                f"{len(keywords)} keyword(s) recorded in {keywords_path}" if keywords
+                else f"empty: {keywords_path} — the agent must record its chosen "
+                     "JD-keyword list, not leave the file blank",
+            )
+
     return {
         "ok": all(c["ok"] for c in checks),
         "tex": str(tex_path),
@@ -285,6 +446,10 @@ def main() -> int:
     ap.add_argument("--log", type=Path, default=None,
                     help="tectonic log, for the overfull-hbox check")
     ap.add_argument("--min-fill", type=float, default=720.0)
+    ap.add_argument("--keywords", type=Path, default=None,
+                    help="path to the agent-written JD-keyword-selection file; "
+                         "if given, checks it exists and is non-empty (does not "
+                         "select or check coverage of keywords itself)")
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args()
 
@@ -297,7 +462,7 @@ def main() -> int:
             print(f"error: {p} does not exist", file=sys.stderr)
             return 2
 
-    report = verify(args.tex, args.pdf, args.log, args.min_fill)
+    report = verify(args.tex, args.pdf, args.log, args.min_fill, args.keywords)
 
     if args.json:
         print(json.dumps(report, indent=2))

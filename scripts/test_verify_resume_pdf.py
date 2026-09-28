@@ -2,10 +2,331 @@
 """Tests for verify_resume_pdf.py.
 
 Run: python3 scripts/test_verify_resume_pdf.py
+
+The link-visibility / reading-order / clean-extraction / keyword-list
+checks are integration-tested against REAL compiled PDFs (tectonic +
+poppler), not just hand-written strings — see `PdfFixtureTests` below.
+Compiling is slow-ish (~1-3s/doc) and needs `tectonic`/`pdftotext` on PATH;
+those tests are skipped (not failed) if either tool is missing.
 """
+import shutil
+import subprocess
+import tempfile
 import unittest
+from pathlib import Path
 
 import verify_resume_pdf as vrp
+
+HAVE_TECTONIC = shutil.which("tectonic") is not None
+HAVE_POPPLER = shutil.which("pdftotext") is not None and shutil.which("pdfinfo") is not None
+
+
+def _run(cmd, **kw):
+    return subprocess.run(cmd, capture_output=True, text=True, check=True, **kw).stdout
+
+
+def compile_tex(tex_source: str, tmpdir: Path, name: str) -> tuple[Path, Path]:
+    """Write `tex_source` to `<tmpdir>/<name>.tex`, compile it, return (tex, pdf) paths."""
+    tex_path = tmpdir / f"{name}.tex"
+    tex_path.write_text(tex_source, encoding="utf-8")
+    proc = subprocess.run(["tectonic", str(tex_path)], cwd=tmpdir,
+                          capture_output=True, text=True, timeout=120)
+    pdf_path = tmpdir / f"{name}.pdf"
+    assert proc.returncode == 0 and pdf_path.exists(), (
+        f"tectonic failed for {name}:\n{proc.stdout}\n{proc.stderr}"
+    )
+    return tex_path, pdf_path
+
+
+def layout_text_of(pdf_path: Path) -> str:
+    return _run(["pdftotext", "-layout", str(pdf_path), "-"])
+
+
+# A minimal but real preamble matching templates/jakes_resume.tex's macros,
+# so declared_content()'s \resumeItem/\resumeSubheading/\resumeProjectHeading
+# parsing exercises the same commands real runs produce.
+_PREAMBLE = r"""
+\documentclass[letterpaper,11pt]{article}
+\usepackage{latexsym}
+\usepackage[empty]{fullpage}
+\usepackage{titlesec}
+\usepackage[usenames,dvipsnames]{color}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+\usepackage{fancyhdr}
+\usepackage[english]{babel}
+\usepackage{tabularx}
+\pagestyle{fancy}
+\fancyhf{} \fancyfoot{}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\footrulewidth}{0pt}
+\addtolength{\oddsidemargin}{-0.5in}
+\addtolength{\evensidemargin}{-0.5in}
+\addtolength{\textwidth}{1in}
+\addtolength{\topmargin}{-.5in}
+\addtolength{\textheight}{1.0in}
+\urlstyle{same}
+\raggedbottom
+\raggedright
+\setlength{\tabcolsep}{0in}
+\titleformat{\section}{
+  \vspace{-4pt}\scshape\raggedright\large
+}{}{0em}{}[\color{black}\titlerule \vspace{-5pt}]
+\newcommand{\resumeItem}[1]{
+  \item\small{
+    {#1 \vspace{-2pt}}
+  }
+}
+\newcommand{\resumeSubheading}[4]{
+  \vspace{-2pt}\item
+    \begin{tabular*}{0.97\textwidth}[t]{l@{\extracolsep{\fill}}r}
+      \textbf{#1} & #2 \\
+      \textit{\small#3} & \textit{\small #4} \\
+    \end{tabular*}\vspace{-7pt}
+}
+\newcommand{\resumeProjectHeading}[2]{
+    \item
+    \begin{tabular*}{0.97\textwidth}{l@{\extracolsep{\fill}}r}
+      \small#1 & #2 \\
+    \end{tabular*}\vspace{-7pt}
+}
+\newcommand{\resumeSubItem}[1]{\resumeItem{#1}\vspace{-4pt}}
+\renewcommand\labelitemii{$\vcenter{\hbox{\tiny$\bullet$}}$}
+\newcommand{\resumeSubHeadingListStart}{\begin{itemize}[leftmargin=0.15in, label={}]}
+\newcommand{\resumeSubHeadingListEnd}{\end{itemize}}
+\newcommand{\resumeItemListStart}{\begin{itemize}}
+\newcommand{\resumeItemListEnd}{\end{itemize}\vspace{-5pt}}
+\begin{document}
+"""
+
+_EDUCATION = r"""
+\section{Education}
+  \resumeSubHeadingListStart
+    \resumeSubheading
+      {Test University}{Test City, ST}
+      {B.S. in Computer Science}{Aug 2022 - May 2026}
+      \resumeItemListStart
+        \resumeItem{\textbf{Relevant Coursework:} Algorithms, Operating Systems}
+      \resumeItemListEnd
+  \resumeSubHeadingListEnd
+"""
+
+_EXPERIENCE = r"""
+\section{Experience}
+  \resumeSubHeadingListStart
+    \resumeSubheading
+      {Acme Corp}{Remote}
+      {Software Engineering Intern}{May 2025 - Aug 2025}
+      \resumeItemListStart
+        \resumeItem{Cut p99 latency by 42\% by rewriting the hot path in Rust.}
+        \resumeItem{Shipped a caching layer serving 10000 requests per second.}
+      \resumeItemListEnd
+  \resumeSubHeadingListEnd
+"""
+
+_PROJECTS = r"""
+\section{Projects}
+    \resumeSubHeadingListStart
+      \resumeProjectHeading
+          {\textbf{Sample Project} $|$ \emph{Python, PyTorch}}{\href{https://github.com/janedoe/sample-project}{github.com/janedoe/sample-project}}
+          \resumeItemListStart
+            \resumeItem{Built a classifier that improved accuracy by 15\%.}
+            \resumeItem{Processed 3 million rows in under 2 seconds.}
+          \resumeItemListEnd
+    \resumeSubHeadingListEnd
+"""
+
+_SKILLS = r"""
+\section{Technical Skills}
+ \begin{itemize}[leftmargin=0.15in, label={}]
+    \small{\item{
+     \textbf{Languages}{: Python, Rust, SQL} \\
+     \textbf{Frameworks \& Tools}{: PyTorch, Docker}
+    }}
+ \end{itemize}
+"""
+
+GOOD_RESUME_TEX = _PREAMBLE + _EDUCATION + _EXPERIENCE + _PROJECTS + _SKILLS + r"\end{document}"
+
+# Reading order broken: Projects rendered before Experience.
+BAD_ORDER_TEX = _PREAMBLE + _EDUCATION + _PROJECTS + _EXPERIENCE + _SKILLS + r"\end{document}"
+
+
+@unittest.skipUnless(HAVE_TECTONIC and HAVE_POPPLER,
+                     "tectonic and poppler (pdftotext/pdfinfo) required")
+class PdfFixtureTests(unittest.TestCase):
+    """Integration + corruption-detection tests against real compiled PDFs."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmpdir = Path(tempfile.mkdtemp(prefix="verify_resume_pdf_test_"))
+        cls.good_tex, cls.good_pdf = compile_tex(GOOD_RESUME_TEX, cls.tmpdir, "good")
+        cls.bad_order_tex, cls.bad_order_pdf = compile_tex(BAD_ORDER_TEX, cls.tmpdir, "bad_order")
+
+        # Minimal standalone docs to genuinely corrupt PDF-level rendering:
+        # a real `\\` LaTeX line break forces a real two-line split in the
+        # compiled PDF's extracted text — this reproduces the "hyphen-split
+        # across a wrap"/"glued or garbled digits" failure mode this check
+        # exists to catch, without depending on fragile column-width/
+        # hyphenation-pattern tricks to organically induce the same split.
+        broken_link_doc = (
+            _PREAMBLE
+            + r"Link: \href{https://x.com}{github.com/janedoe/resume-\\builder}"
+            + "\n\\end{document}"
+        )
+        cls.broken_link_tex, cls.broken_link_pdf = compile_tex(
+            broken_link_doc, cls.tmpdir, "broken_link")
+
+        broken_num_doc = (
+            _PREAMBLE
+            + r"Bullet: Cut latency by 4\\2\% today."
+            + "\n\\end{document}"
+        )
+        cls.broken_num_tex, cls.broken_num_pdf = compile_tex(
+            broken_num_doc, cls.tmpdir, "broken_num")
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmpdir, ignore_errors=True)
+
+    # -- full end-to-end verify() --------------------------------------
+
+    def test_good_resume_passes_all_checks(self):
+        report = vrp.verify(self.good_tex, self.good_pdf, None, 0.0)
+        failed = [c for c in report["checks"] if not c["ok"]]
+        self.assertEqual(failed, [], f"unexpected failures: {failed}")
+        for name in ("clean_extraction", "reading_order", "link_visibility"):
+            names = [c["check"] for c in report["checks"]]
+            self.assertIn(name, names)
+
+    def test_reading_order_fails_when_sections_reordered(self):
+        report = vrp.verify(self.bad_order_tex, self.bad_order_pdf, None, 0.0)
+        order_check = next(c for c in report["checks"] if c["check"] == "reading_order")
+        self.assertFalse(order_check["ok"])
+        self.assertIn("out of order", order_check["detail"])
+        # Everything else about this doc is fine — isolate the failure.
+        other_fails = [c["check"] for c in report["checks"]
+                      if not c["ok"] and c["check"] != "reading_order"]
+        self.assertEqual(other_fails, [])
+
+    def test_reading_order_passes_in_correct_order(self):
+        report = vrp.verify(self.good_tex, self.good_pdf, None, 0.0)
+        order_check = next(c for c in report["checks"] if c["check"] == "reading_order")
+        self.assertTrue(order_check["ok"])
+
+    # -- link visibility, against a genuinely corrupted real PDF --------
+
+    def test_link_visibility_passes_for_clean_render(self):
+        text = layout_text_of(self.good_pdf)
+        issues = vrp.link_visibility_issues(self.good_tex.read_text(), text)
+        self.assertEqual(issues, [])
+
+    def test_link_visibility_fails_when_pdf_splits_the_link_across_lines(self):
+        # The *declared* link is clean (what a correct .tex would say); the
+        # extracted text comes from a real PDF where that exact URL was
+        # genuinely rendered split across two lines.
+        declared_tex = r"\href{https://x.com}{github.com/janedoe/resume-builder}"
+        broken_layout = layout_text_of(self.broken_link_pdf)
+        self.assertIn("resume-\nbuilder", broken_layout)  # sanity: real split happened
+        issues = vrp.link_visibility_issues(declared_tex, broken_layout)
+        self.assertEqual(issues, ["github.com/janedoe/resume-builder"])
+
+    # -- clean extraction, against a genuinely corrupted real PDF -------
+
+    def test_clean_extraction_passes_for_clean_render(self):
+        text = layout_text_of(self.good_pdf)
+        _, bullets = vrp.declared_content(self.good_tex.read_text())
+        issues = vrp.clean_extraction_issues(bullets, text)
+        self.assertEqual(issues, [])
+
+    def test_clean_extraction_fails_when_pdf_splits_a_number_across_lines(self):
+        broken_layout = layout_text_of(self.broken_num_pdf)
+        self.assertIn("4\n2% today.", broken_layout)  # sanity: real split happened
+        issues = vrp.clean_extraction_issues(["Cut latency by 42% today."], broken_layout)
+        self.assertEqual(issues, ["42%"])
+
+    # -- keyword-list presence/non-emptiness -----------------------------
+
+    def test_keyword_list_missing_fails_clearly(self):
+        missing_path = self.tmpdir / "does-not-exist.keywords.txt"
+        report = vrp.verify(self.good_tex, self.good_pdf, None, 0.0, missing_path)
+        kw = next(c for c in report["checks"] if c["check"] == "keyword_list")
+        self.assertFalse(kw["ok"])
+        self.assertIn("missing", kw["detail"])
+        self.assertFalse(report["ok"])
+
+    def test_keyword_list_empty_file_fails_clearly(self):
+        empty_path = self.tmpdir / "empty.keywords.txt"
+        empty_path.write_text("   \n\n", encoding="utf-8")
+        report = vrp.verify(self.good_tex, self.good_pdf, None, 0.0, empty_path)
+        kw = next(c for c in report["checks"] if c["check"] == "keyword_list")
+        self.assertFalse(kw["ok"])
+        self.assertIn("empty", kw["detail"])
+
+    def test_keyword_list_present_and_nonempty_passes(self):
+        kw_path = self.tmpdir / "real.keywords.txt"
+        kw_path.write_text("Python\nRust\ndistributed systems\n", encoding="utf-8")
+        report = vrp.verify(self.good_tex, self.good_pdf, None, 0.0, kw_path)
+        kw = next(c for c in report["checks"] if c["check"] == "keyword_list")
+        self.assertTrue(kw["ok"])
+        self.assertIn("3 keyword", kw["detail"])
+
+    def test_no_keywords_path_means_no_keyword_check(self):
+        report = vrp.verify(self.good_tex, self.good_pdf, None, 0.0, None)
+        names = [c["check"] for c in report["checks"]]
+        self.assertNotIn("keyword_list", names)
+
+
+class ReadingOrderUnitTests(unittest.TestCase):
+    def test_missing_heading_flagged(self):
+        issues = vrp.reading_order_issues("Education\nExperience\nProjects\n")
+        self.assertTrue(issues)
+        self.assertIn("Technical Skills", issues[0])
+
+    def test_out_of_order_flagged(self):
+        issues = vrp.reading_order_issues(
+            "Education\nProjects\nExperience\nTechnical Skills\n")
+        self.assertTrue(issues)
+        self.assertIn("out of order", issues[0])
+
+    def test_correct_order_passes(self):
+        issues = vrp.reading_order_issues(
+            "Education\nExperience\nProjects\nTechnical Skills\n")
+        self.assertEqual(issues, [])
+
+
+class LinkVisibilityUnitTests(unittest.TestCase):
+    def test_no_links_declared_is_not_an_issue(self):
+        self.assertEqual(vrp.link_visibility_issues(r"\begin{document}no links\end{document}",
+                                                     "no links"), [])
+
+    def test_glued_to_neighboring_text_flagged(self):
+        tex = r"\href{https://x.com}{github.com/x/y}"
+        # present as a substring, but jammed against unrelated alnum text
+        text = "seegithub.com/x/yhere"
+        issues = vrp.link_visibility_issues(tex, text)
+        self.assertEqual(issues, ["github.com/x/y"])
+
+    def test_bounded_by_punctuation_or_space_passes(self):
+        tex = r"\href{https://x.com}{github.com/x/y}"
+        text = "see: github.com/x/y (repo)"
+        self.assertEqual(vrp.link_visibility_issues(tex, text), [])
+
+
+class CleanExtractionUnitTests(unittest.TestCase):
+    def test_missing_numeric_token_flagged(self):
+        issues = vrp.clean_extraction_issues(["Cut latency by 42%."], "Cut latency by today.")
+        self.assertEqual(issues, ["42%"])
+
+    def test_glued_numeric_token_flagged(self):
+        # "42" is present only as a substring of an unrelated "142%", so the
+        # genuine "42%" token must still be reported missing.
+        issues = vrp.clean_extraction_issues(["grew revenue by 42%"], "grew revenue by 142% ish")
+        self.assertEqual(issues, ["42%"])
+
+    def test_present_token_passes(self):
+        issues = vrp.clean_extraction_issues(["grew revenue by 42%"], "we grew revenue by 42% yoy")
+        self.assertEqual(issues, [])
 
 
 class StripTexTests(unittest.TestCase):
