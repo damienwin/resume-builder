@@ -447,7 +447,8 @@ fix the `.tex`, recompile, and re-verify on any failure.
    — never add a keyword to the file that the knowledge base doesn't
    actually support just to make this check easier.
 5. **Link visibility** (automated above — `link_visibility`). Every
-   `repo:`/`demo:` display string must appear verbatim and unbroken in raw
+   `\href` display string — project `repo:`/`demo:` links and the header's
+   email/github/linkedin/website links alike — must appear verbatim and unbroken in raw
    `-layout` extraction — not hyphen-split across a wrap, not glued to
    neighboring text. A failure names the broken link(s); shorten the
    title/tech-stack (never the URL) per Step 5 and recompile.

@@ -38,8 +38,9 @@ fails loudly when they disagree.
   9. reading_order   — section headings (Education, Experience, Projects,
                        Technical Skills) appear in that template order in
                        the extracted text
- 10. link_visibility — every `\href{...}{DISPLAY}` display string (the
-                       project `repo:`/`demo:` link text) appears verbatim
+ 10. link_visibility — every `\\href{...}{DISPLAY}` display string (project
+                       `repo:`/`demo:` links AND the header's mailto/github/
+                       linkedin/website links) appears verbatim
                        and unbroken in the raw `-layout` extraction — not
                        hyphen-split across a wrap, not glued to neighboring
                        text
@@ -206,14 +207,16 @@ def reading_order_issues(raw_text: str) -> list[str]:
     Checked against the plain (no `-layout`) extraction, mirroring the
     manual instruction this replaces ("the no-`-layout` output reads
     header -> education -> experience -> projects -> skills").
+
+    Each heading is matched only on a line consisting of the heading alone
+    (surrounding whitespace allowed), so the same word inside an earlier
+    bullet ("...side Projects in Rust") can't cause a false fail or hide a
+    real reorder.
     """
     positions: list[tuple[int, str]] = []
     for name in _SECTION_ORDER:
-        idx = raw_text.find(name)
-        if idx == -1:
-            positions.append((-1, name))
-        else:
-            positions.append((idx, name))
+        m = re.search(r"(?m)^[ \t]*" + re.escape(name) + r"[ \t]*$", raw_text)
+        positions.append((m.start() if m else -1, name))
     missing = [name for idx, name in positions if idx == -1]
     if missing:
         return [f"heading(s) not found in extracted text: {missing}"]
@@ -245,13 +248,19 @@ def _bounded_present(needle: str, haystack: str, is_boundary_char) -> bool:
 
 
 def link_display_texts(tex: str) -> list[str]:
-    """The visible display text of every `\\href{url}{DISPLAY}` in the body."""
+    """The visible display text of every `\\href{url}{DISPLAY}` in the body.
+
+    Covers EVERY href, not only project `repo:`/`demo:` links — the header's
+    mailto/github/linkedin/website links are checked too. The display text
+    is run through strip_tex() so `\\_`, `\\textbf{...}` etc. reduce to what
+    the PDF shows; the extracted side it's compared against stays raw.
+    """
     start = tex.find(r"\begin{document}")
     body = tex[start:] if start != -1 else tex
     body = re.sub(r"(?m)(?<!\\)%.*$", "", body)
     out = []
     for m in re.finditer(r"\\href\{[^}]*\}\{((?:[^{}]|\{[^}]*\})*)\}", body):
-        display = m.group(1).strip()
+        display = strip_tex(m.group(1))
         if display:
             out.append(display)
     return out

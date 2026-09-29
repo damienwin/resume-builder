@@ -151,24 +151,53 @@ GOOD_RESUME_TEX = _PREAMBLE + _EDUCATION + _EXPERIENCE + _PROJECTS + _SKILLS + r
 # Reading order broken: Projects rendered before Experience.
 BAD_ORDER_TEX = _PREAMBLE + _EDUCATION + _PROJECTS + _EXPERIENCE + _SKILLS + r"\end{document}"
 
+# Link glued to neighboring text in the real template's right-hand cell:
+# nothing separates the display string from "Extra", so the rendered PDF
+# shows "...sample-projectExtra". Drives the end-to-end broken-link case.
+GLUED_LINK_TEX = GOOD_RESUME_TEX.replace(
+    "{github.com/janedoe/sample-project}}",
+    "{github.com/janedoe/sample-project}Extra}",
+)
+assert GLUED_LINK_TEX != GOOD_RESUME_TEX
+
+# Escaped underscore in the displayed URL: the .tex says `\_`, the PDF
+# shows `_`. Must pass — strip_tex() on the display side handles it.
+UNDERSCORE_LINK_TEX = GOOD_RESUME_TEX.replace(
+    "{github.com/janedoe/sample-project}}",
+    "{github.com/janedoe/sample\\_project}}",
+)
+assert UNDERSCORE_LINK_TEX != GOOD_RESUME_TEX
+
+# Heading words ("Projects", "Technical Skills") inside an EARLIER bullet:
+# an unanchored find() would locate them before Experience and false-fail.
+STRAY_HEADING_WORD_TEX = GOOD_RESUME_TEX.replace(
+    "Algorithms, Operating Systems",
+    "Algorithms, Senior Projects, Technical Skills Seminar",
+)
+assert STRAY_HEADING_WORD_TEX != GOOD_RESUME_TEX
+
 
 @unittest.skipUnless(HAVE_TECTONIC and HAVE_POPPLER,
                      "tectonic and poppler (pdftotext/pdfinfo) required")
 class PdfFixtureTests(unittest.TestCase):
-    """Integration + corruption-detection tests against real compiled PDFs."""
+    """Integration tests against real compiled PDFs (good and deliberately broken)."""
 
     @classmethod
     def setUpClass(cls):
         cls.tmpdir = Path(tempfile.mkdtemp(prefix="verify_resume_pdf_test_"))
         cls.good_tex, cls.good_pdf = compile_tex(GOOD_RESUME_TEX, cls.tmpdir, "good")
         cls.bad_order_tex, cls.bad_order_pdf = compile_tex(BAD_ORDER_TEX, cls.tmpdir, "bad_order")
+        cls.glued_tex, cls.glued_pdf = compile_tex(GLUED_LINK_TEX, cls.tmpdir, "glued_link")
+        cls.underscore_tex, cls.underscore_pdf = compile_tex(
+            UNDERSCORE_LINK_TEX, cls.tmpdir, "underscore_link")
+        cls.stray_tex, cls.stray_pdf = compile_tex(
+            STRAY_HEADING_WORD_TEX, cls.tmpdir, "stray_heading_word")
 
-        # Minimal standalone docs to genuinely corrupt PDF-level rendering:
-        # a real `\\` LaTeX line break forces a real two-line split in the
-        # compiled PDF's extracted text — this reproduces the "hyphen-split
-        # across a wrap"/"glued or garbled digits" failure mode this check
-        # exists to catch, without depending on fragile column-width/
-        # hyphenation-pattern tricks to organically induce the same split.
+        # Minimal standalone docs with a FORCED `\\` line break inserted in
+        # the middle of a link / number. This is not organic overflow: the
+        # break is put there on purpose so the compiled PDF's extracted text
+        # reliably shows the token split across two lines, which is the
+        # symptom these checks look for (whatever caused it).
         broken_link_doc = (
             _PREAMBLE
             + r"Link: \href{https://x.com}{github.com/janedoe/resume-\\builder}"
@@ -209,12 +238,33 @@ class PdfFixtureTests(unittest.TestCase):
                       if not c["ok"] and c["check"] != "reading_order"]
         self.assertEqual(other_fails, [])
 
+    def test_reading_order_ignores_heading_words_inside_earlier_bullets(self):
+        report = vrp.verify(self.stray_tex, self.stray_pdf, None, 0.0)
+        failed = [c for c in report["checks"] if not c["ok"]]
+        self.assertEqual(failed, [], f"unexpected failures: {failed}")
+
+    def test_end_to_end_glued_link_fails_link_visibility_only(self):
+        report = vrp.verify(self.glued_tex, self.glued_pdf, None, 0.0)
+        link = next(c for c in report["checks"] if c["check"] == "link_visibility")
+        self.assertFalse(link["ok"])
+        self.assertIn("github.com/janedoe/sample-project", link["detail"])
+        self.assertFalse(report["ok"])
+        other_fails = [c["check"] for c in report["checks"]
+                       if not c["ok"] and c["check"] != "link_visibility"]
+        self.assertEqual(other_fails, [])
+
+    def test_end_to_end_escaped_underscore_link_passes(self):
+        self.assertIn("sample_project", layout_text_of(self.underscore_pdf))
+        report = vrp.verify(self.underscore_tex, self.underscore_pdf, None, 0.0)
+        failed = [c for c in report["checks"] if not c["ok"]]
+        self.assertEqual(failed, [], f"unexpected failures: {failed}")
+
     def test_reading_order_passes_in_correct_order(self):
         report = vrp.verify(self.good_tex, self.good_pdf, None, 0.0)
         order_check = next(c for c in report["checks"] if c["check"] == "reading_order")
         self.assertTrue(order_check["ok"])
 
-    # -- link visibility, against a genuinely corrupted real PDF --------
+    # -- link visibility, against a real PDF with a forced `\\` break --
 
     def test_link_visibility_passes_for_clean_render(self):
         text = layout_text_of(self.good_pdf)
@@ -223,15 +273,15 @@ class PdfFixtureTests(unittest.TestCase):
 
     def test_link_visibility_fails_when_pdf_splits_the_link_across_lines(self):
         # The *declared* link is clean (what a correct .tex would say); the
-        # extracted text comes from a real PDF where that exact URL was
-        # genuinely rendered split across two lines.
+        # extracted text comes from a real PDF where a forced `\\` break
+        # split that exact URL across two lines.
         declared_tex = r"\href{https://x.com}{github.com/janedoe/resume-builder}"
         broken_layout = layout_text_of(self.broken_link_pdf)
         self.assertIn("resume-\nbuilder", broken_layout)  # sanity: real split happened
         issues = vrp.link_visibility_issues(declared_tex, broken_layout)
         self.assertEqual(issues, ["github.com/janedoe/resume-builder"])
 
-    # -- clean extraction, against a genuinely corrupted real PDF -------
+    # -- clean extraction, against a real PDF with a forced `\\` break -
 
     def test_clean_extraction_passes_for_clean_render(self):
         text = layout_text_of(self.good_pdf)
@@ -289,6 +339,16 @@ class ReadingOrderUnitTests(unittest.TestCase):
         self.assertTrue(issues)
         self.assertIn("out of order", issues[0])
 
+    def test_heading_word_inside_earlier_line_is_ignored(self):
+        text = ("Education\nCoursework: Senior Projects, Technical Skills lab\n"
+                "Experience\nProjects\nTechnical Skills\n")
+        self.assertEqual(vrp.reading_order_issues(text), [])
+
+    def test_real_reorder_not_hidden_by_stray_word(self):
+        text = ("Education\nbuilt Experience dashboards\n"
+                "Projects\nExperience\nTechnical Skills\n")
+        self.assertIn("out of order", vrp.reading_order_issues(text)[0])
+
     def test_correct_order_passes(self):
         issues = vrp.reading_order_issues(
             "Education\nExperience\nProjects\nTechnical Skills\n")
@@ -306,6 +366,14 @@ class LinkVisibilityUnitTests(unittest.TestCase):
         text = "seegithub.com/x/yhere"
         issues = vrp.link_visibility_issues(tex, text)
         self.assertEqual(issues, ["github.com/x/y"])
+
+    def test_escaped_underscore_display_matches_rendered_underscore(self):
+        tex = r"\href{https://github.com/x/my_proj}{github.com/x/my\_proj}"
+        self.assertEqual(vrp.link_visibility_issues(tex, "repo: github.com/x/my_proj"), [])
+
+    def test_macro_wrapped_display_matches(self):
+        tex = r"\href{mailto:a@b.co}{\underline{a@b.co}}"
+        self.assertEqual(vrp.link_visibility_issues(tex, "a@b.co | x"), [])
 
     def test_bounded_by_punctuation_or_space_passes(self):
         tex = r"\href{https://x.com}{github.com/x/y}"
