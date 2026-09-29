@@ -350,6 +350,7 @@ python3 scripts/run_timer.py mark tailor-resume render --scope "$RUN_ID"
 ```bash
 python3 scripts/compile_verify.py build/$SLUG.tex build/$SLUG.pdf \
   --log build/$SLUG.tectonic.log --json-out build/$SLUG.verify.json \
+  --repair-log build/$SLUG.repair_log.json \
   --timer-skill tailor-resume --timer-scope "$RUN_ID" --timer-label compile_verify
 ```
 
@@ -358,9 +359,15 @@ code is authoritative), writes the log, runs every `verify_resume_pdf.py`
 check, and exits nonzero if either step failed. (Tectonic pulls packages on
 demand. Missing tools: `brew install tectonic`, `brew install poppler`.)
 
-On any failure, fix the `.tex` and rerun `compile_verify.py` with
-`--timer-label repair`, so the repair loop is timed separately from the first
-pass.
+`--json-out` is overwritten on every recompile; `--repair-log` appends one
+record per attempt (failing check names, `run_id` = `$RUN_ID` from
+`--timer-scope`, timestamp), so it is the only record of which checks failed
+across this run's repair loop. Records from an earlier run of the same slug
+are dropped, so attempt numbers restart at 1 per run.
+
+On any failure, fix the `.tex` and rerun the same command with
+`--timer-label repair` (keep `--repair-log` and `--timer-scope`), so the
+repair loop is timed and logged separately from the first pass.
 
 **`verify_resume_pdf.py` exists because page count alone is not proof of
 completeness.** Observed live 2026-09-01 (Idler tailoring run): an
@@ -450,7 +457,7 @@ fix the `.tex`, recompile, and re-verify on any failure.
    it isn't one.
 
 Compilation errors → read the output, fix the `.tex`, rerun `compile_verify.py`
-with `--timer-label repair`.
+with `--timer-label repair` (same `--repair-log` and `--timer-scope`).
 
 ## Step 6b — One final semantic/readability review (optional, default off)
 
