@@ -17,8 +17,10 @@ JD freshness check: the manifest records both the JD file's resolved path
 (`jd_path`) and a *normalized* content hash (`jd_sha256_normalized`) at write
 time — not just the raw-byte hash. `verify --jd-file <path>` re-hashes that
 path's current content the same normalized way (whitespace collapsed,
-case-folded, volatile lines like "Posted 3 days ago" or tracking-token lines
-dropped) and compares. Raw-byte hashing was rejected on purpose: a fresh page
+case-folded, tracking query params and "posted N days ago" phrases removed
+in place, standalone view/applicant counter lines dropped) and compares. If
+normalization leaves nothing, or under half the raw text, verify fails closed
+rather than trusting a hash of a near-empty string. Raw-byte hashing was rejected on purpose: a fresh page
 fetch is rarely byte-stable, so it would force a false mismatch on almost
 every standalone `apply` run and silently defeat the whole handoff
 optimization. When `--jd-file` is *not* passed, `verify` falls back to
@@ -48,35 +50,71 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-# Lines that vary run-to-run without reflecting a real change to the JD's
-# substantive content — dropped before normalized hashing so a fresh fetch
-# doesn't trigger a false-positive staleness mismatch.
-_VOLATILE_LINE_PATTERNS = [
-    re.compile(r'^\s*posted\s+\d+\+?\s*(day|days|hour|hours|week|weeks|month|months)\s+ago\s*$', re.I),
-    re.compile(r'^\s*\d+\+?\s*(day|days|hour|hours|week|weeks|month|months)\s+ago\s*$', re.I),
-    re.compile(r'^\s*(views?|applicants?|apply\s+before)\s*:?\s*\d+.*$', re.I),
-    re.compile(r'(utm_[a-z0-9_]+=|[?&](trk|ref|gh_src|gh_jid|source)=)', re.I),
+# Re-fetch noise that doesn't reflect a change to the JD's substance. Only the
+# matched *token or phrase* is removed — never the surrounding line — because
+# a JD fetched as one long line (`fetch_urls.py --strip-tags` output often is)
+# would otherwise normalize to nothing and hash-match every later version.
+_TRACKING_PARAM = re.compile(
+    r'([?&])(utm_[a-z0-9_]+|trk|ref|gh_src|gh_jid|source)=[^\s&#]*', re.I)
+_POSTED_AGO = re.compile(
+    r'\bposted\s+\d+\+?\s*(minutes?|hours?|days?|weeks?|months?)\s+ago\b', re.I)
+# Whole-line-only patterns: anchored so they drop a short standalone counter
+# line ("Applicants: 214") but never a substantive line that merely starts
+# with the same word ("Applicants: 5+ years of experience required").
+# Deliberately absent: "apply before <date>" — a deadline change is real.
+_VOLATILE_WHOLE_LINES = [
+    re.compile(r'^\d+\+?\s*(minutes?|hours?|days?|weeks?|months?)\s+ago$', re.I),
+    re.compile(r'^(views?|applicants?)\s*:?\s*\d[\d,]*\+?$', re.I),
+    re.compile(r'^\d[\d,]*\+?\s+(views?|applicants?)$', re.I),
 ]
+
+# Fail-closed threshold: if normalization removed more than half of the raw
+# text's non-whitespace characters, the normalized form no longer represents
+# the JD, so its hash can't vouch for freshness. Legit noise (a posted-ago
+# phrase, tracking params, a counter line) is a few dozen chars against a JD
+# that runs to hundreds or thousands, so it never gets near 50%; losing more
+# than half means the normalizer is eating substance.
+MIN_KEPT_RATIO = 0.5
+
+
+def _clean_query_separators(line: str) -> str:
+    # After removing tracking params, fix "?&x=1" -> "?x=1" and drop a
+    # dangling "?" / "&" left at the end of a URL.
+    line = re.sub(r'\?&+', '?', line)
+    line = re.sub(r'&{2,}', '&', line)
+    return re.sub(r'[?&](?=[\s)\].,;]|$)', '', line)
 
 
 def normalize_jd_text(text: str) -> str:
-    """Whitespace-insensitive, case-insensitive, volatile-line-stripped form.
+    """Whitespace-insensitive, case-insensitive, re-fetch-noise-stripped form.
 
-    Deliberately lenient enough to absorb re-fetch noise (spacing, "posted N
-    days ago", tracking query params) but not so lenient it hides a genuine
-    content change — every remaining line's actual words still have to match.
+    Lenient only toward specific noise (spacing, case, "posted N days ago",
+    tracking query params, standalone view/applicant counters). Every other
+    word must still match, so a genuine requirements change is caught.
     """
     normalized = text.replace("\r\n", "\n").replace("\r", "\n")
     lines = []
     for raw_line in normalized.split("\n"):
-        stripped = raw_line.strip()
-        if not stripped:
+        line = _TRACKING_PARAM.sub(r'\1', raw_line)
+        line = _clean_query_separators(line)
+        line = _POSTED_AGO.sub(' ', line)
+        line = re.sub(r"\s+", " ", line).strip()
+        if not line:
             continue
-        if any(pattern.search(stripped) for pattern in _VOLATILE_LINE_PATTERNS):
+        if any(p.match(line) for p in _VOLATILE_WHOLE_LINES):
             continue
-        collapsed = re.sub(r"\s+", " ", stripped).casefold()
-        lines.append(collapsed)
+        lines.append(line.casefold())
     return "\n".join(lines)
+
+
+def normalization_degenerate(text: str) -> bool:
+    """True when the normalized form is empty or kept < MIN_KEPT_RATIO of the
+    raw non-whitespace characters — i.e. its hash can't be trusted."""
+    raw_chars = len(re.sub(r"\s+", "", text))
+    kept_chars = len(re.sub(r"\s+", "", normalize_jd_text(text)))
+    if kept_chars == 0:
+        return True
+    return raw_chars > 0 and kept_chars / raw_chars < MIN_KEPT_RATIO
 
 
 def normalized_sha256_text(text: str) -> str:
@@ -107,6 +145,8 @@ def build_manifest(posting_url: str, jd_file: Path, pdf: Path, tex: Path,
         "jd_path": str(Path(jd_file).resolve()),
         "jd_sha256": sha256_file(jd_file),
         "jd_sha256_normalized": normalized_sha256_file(jd_file),
+        "jd_normalization_degenerate": normalization_degenerate(
+            Path(jd_file).read_text(encoding="utf-8", errors="replace")),
         "pdf": str(Path(pdf).resolve()),
         "pdf_sha256": sha256_file(pdf),
         "tex": str(Path(tex).resolve()),
@@ -169,9 +209,19 @@ def verify_manifest(manifest_path: Path, posting_url: str | None = None,
                        "was not re-verified")
                 warnings.append(msg)
                 print(f"resume_handoff verify: {msg}", file=sys.stderr)
-            elif normalized_sha256_file(jd_file) != expected_norm:
-                reasons.append("JD content changed since tailoring "
-                               "(normalized hash mismatch)")
+            else:
+                current = Path(jd_file).read_text(encoding="utf-8", errors="replace")
+                if manifest.get("jd_normalization_degenerate") \
+                        or normalization_degenerate(current):
+                    # Fail closed: a near-empty normalized form would
+                    # hash-match unrelated JDs, so it can't prove freshness.
+                    reasons.append(
+                        "JD normalization degenerate (normalized text empty or "
+                        f"< {int(MIN_KEPT_RATIO * 100)}% of raw); cannot verify "
+                        "JD freshness — re-tailor")
+                elif normalized_sha256_text(current) != expected_norm:
+                    reasons.append("JD content changed since tailoring "
+                                   "(normalized hash mismatch)")
     else:
         msg = ("--jd-file not passed; falling back to posting-URL-only "
                "check — JD content was not re-verified")

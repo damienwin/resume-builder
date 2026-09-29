@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 from finalize_resume import finalize
-from resume_handoff import verify_manifest
+from resume_handoff import normalized_sha256_text, verify_manifest
 
 
 class FinalizeResumeTests(unittest.TestCase):
@@ -78,6 +78,20 @@ class FinalizeResumeTests(unittest.TestCase):
         self.assertEqual(metric["company"], "Acme")
         handoff = verify_manifest(self.handoff, posting_url="https://example.com/job")
         self.assertTrue(handoff["valid"], handoff["reasons"])
+
+    def test_handoff_records_normalized_jd_hash_and_path(self):
+        self.assertTrue(self._run()["ok"])
+        manifest = json.loads(self.handoff.read_text())
+        self.assertEqual(manifest["jd_path"], str(self.case.resolve()))
+        self.assertEqual(manifest["jd_sha256_normalized"],
+                         normalized_sha256_text(self.case.read_text()))
+        ok = verify_manifest(self.handoff, posting_url="https://example.com/job",
+                             jd_file=self.case)
+        self.assertTrue(ok["valid"], ok["reasons"])
+        self.case.write_text("Requires Kubernetes and Terraform.")
+        stale = verify_manifest(self.handoff, posting_url="https://example.com/job",
+                                jd_file=self.case)
+        self.assertFalse(stale["valid"])
 
     def test_missing_optional_telemetry_does_not_abort_finalize(self):
         result = finalize(

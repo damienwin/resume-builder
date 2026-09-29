@@ -33,53 +33,78 @@ python3 scripts/run_timer.py start apply --scope "$RUN_ID"
 
 **First check for a verified handoff from a tailor that already ran for this
 posting** — job-scan's fan-out tailors once and writes
-`build/$SLUG.handoff.json`. Pass `--jd-file` so the JD content itself, not
-just the posting URL, is re-verified — without it, `verify` falls back to a
-posting-URL-only check and JD drift can't be caught. Resolve the JD path in
-this order before calling `verify`:
+`build/$SLUG.handoff.json`. **No manifest → skip straight to tailoring.**
+Otherwise pass `--jd-file` pointing at the *current* posting text, so JD
+drift since tailoring is caught, not just a posting-URL change. Which file
+that is depends on the case:
 
-1. If `build/$SLUG.handoff.json` already exists, read its `jd_path` field
-   (recorded at write time by `resume_handoff.py write`) and use that path —
-   it's the exact file that was hashed into the manifest.
-2. Otherwise, if this run is part of the same session's job-scan fan-out and
-   `<scratchpad>/jds/$SLUG.txt` (the Step 2.5 JD cache, per `tailor-resume`
-   SKILL.md) exists, use that path.
-3. Otherwise, there is no JD path to pass — call `verify` without
-   `--jd-file` (it logs the fallback; see below) and proceed straight to
-   tailoring in that case anyway, since a fresh JD was never fetched here to
-   compare against.
+| Case | `--jd-file` | What it detects |
+|---|---|---|
+| **A. Fan-out / same session** — job-scan fetched this JD moments ago and `<scratchpad>/jds/$SLUG.txt` exists | that cached file | posting changes since the scan's fetch (which is effectively live) |
+| **B. Standalone `apply`** — manifest from an earlier session, no same-session cache | fetch the live posting now with `fetch_urls.py --strip-tags` into a scratchpad temp dir and pass the `.txt` it writes | real upstream JD changes; the normalized hash absorbs re-fetch noise (spacing, case, tracking params, "posted N days ago") |
+| **B′. Live fetch failed** (non-2xx, timeout, empty/JS-only body) | the manifest's recorded `jd_path` — **log a warning** that only local edits to that file are detected, not upstream changes | local edits only |
+| **C. No JD file at all** (fetch failed *and* `jd_path` missing/deleted, or an old manifest) | omit `--jd-file` | posting URL only; `verify` logs the fallback to stderr and in `warnings` |
+
+Never use the manifest's own `jd_path` when a live fetch or same-session
+cache is available — it's the very file hashed at write time, so it only
+proves nobody edited it locally.
 
 ```bash
-JD_PATH=$(python3 -c "import json,sys; print(json.load(open('build/$SLUG.handoff.json')).get('jd_path',''))" 2>/dev/null)
-[ -z "$JD_PATH" ] && [ -f "<scratchpad>/jds/$SLUG.txt" ] && JD_PATH="<scratchpad>/jds/$SLUG.txt"
-if [ -n "$JD_PATH" ]; then
-  python3 scripts/resume_handoff.py verify \
-    --manifest build/$SLUG.handoff.json --posting-url "<job URL>" --jd-file "$JD_PATH"
-else
-  echo "apply: no JD path available for handoff verify — falling back to posting-URL-only check" >&2
-  python3 scripts/resume_handoff.py verify \
-    --manifest build/$SLUG.handoff.json --posting-url "<job URL>"
+MANIFEST=build/$SLUG.handoff.json
+CACHE="<scratchpad>/jds/$SLUG.txt"
+JD_PATH=""
+if [ -f "$MANIFEST" ]; then
+  if [ -s "$CACHE" ]; then                                   # case A
+    JD_PATH="$CACHE"
+  else                                                       # case B
+    LIVE="<scratchpad>/handoff-live/$RUN_ID"; mkdir -p "$LIVE"
+    printf '%s\tlive.html\n' "<job URL>" > "$LIVE/urls.txt"
+    python3 scripts/fetch_urls.py --urls-file "$LIVE/urls.txt" --out-dir "$LIVE" --strip-tags > "$LIVE/fetch.json"
+    if [ -s "$LIVE/live.html.txt" ]; then
+      JD_PATH="$LIVE/live.html.txt"
+    else                                                     # case B'
+      JD_PATH=$(python3 -c "import json; print(json.load(open('$MANIFEST')).get('jd_path',''))")
+      [ -f "$JD_PATH" ] || JD_PATH=""
+      echo "apply: WARNING live JD fetch failed; verifying against recorded jd_path — only local edits are detected, not upstream posting changes" >&2
+    fi
+  fi
+  if [ -n "$JD_PATH" ]; then
+    python3 scripts/resume_handoff.py verify --manifest "$MANIFEST" \
+      --posting-url "<job URL>" --jd-file "$JD_PATH"
+  else                                                       # case C (verify logs the fallback)
+    python3 scripts/resume_handoff.py verify --manifest "$MANIFEST" \
+      --posting-url "<job URL>"
+  fi
 fi
 ```
 
-- **Exit 0** → the manifest's `pdf` is the tailored, gate-passed PDF for this
-  posting. Skip tailoring entirely and use that path in Step 2. This is what
-  stops the fan-out from tailoring the same posting twice.
+If the live `.txt` is nav chrome only (a JS-rendered page), treat it as case
+B′, not B — a chrome-only fetch would just mismatch and force a needless
+re-tailor.
+
+- **Exit 0** (any case A–C) → the manifest's `pdf` is the tailored,
+  gate-passed PDF for this posting. Skip tailoring entirely and use that
+  path in Step 2. This is what stops the fan-out from tailoring the same
+  posting twice. In cases B′ and C, mention in the run summary that JD
+  freshness was only partially checked.
 - **Exit 1, or no manifest** → run the **tailor-resume** skill
   (`.claude/skills/tailor-resume/SKILL.md`) on the given URL / JD file / pasted
   text, exactly as `/tailor` would — including its ATS-safety pass, one-page
   check, and archive. Its Step 7 writes `build/$SLUG.handoff.json`; verify that
-  manifest before continuing.
+  manifest before continuing. In case B, tailor from the live `.txt` you just
+  fetched rather than fetching again.
 
 Never tailor off a stale build: the manifest records the JD's path and a
-normalized content hash (not raw bytes — a fresh fetch is rarely
-byte-stable) alongside the PDF, `.tex`, and final-gate hashes, so a mismatch
-in any of them means "tailor again," not "trust it." When `--jd-file` isn't
-passed (no path was resolvable above, or an older caller), `verify` falls
-back to today's posting-URL-only check and logs that fallback to stderr —
-don't treat that log line as noise; it means JD drift was not checked this
-run. That skill names its working files `build/<slug>.*` per job — do not
-reintroduce a shared `build/resume.pdf`.
+normalized content hash alongside the PDF, `.tex`, and final-gate hashes, so
+a mismatch in any of them means "tailor again," not "trust it." The
+normalization only strips narrow re-fetch noise, and `verify` fails closed
+when it would leave the JD empty or under half its raw size. A live fetch
+whose text differs in format from the text originally tailored from (e.g.
+the JD came from `WebFetch`) will mismatch and re-tailor. That is the safe
+direction, so accept it. A `falling back to posting-URL-only` log line means
+JD drift was not checked this run, so don't treat it as noise. That skill
+names its working files `build/<slug>.*` per job; do not reintroduce a
+shared `build/resume.pdf`.
 
 ```bash
 python3 scripts/run_timer.py mark apply tailor --scope "$RUN_ID"
