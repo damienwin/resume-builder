@@ -89,13 +89,14 @@ class RepairLogTests(unittest.TestCase):
         attempt3 = {"ok": True, "compile": {"ok": True},
                     "checks": [{"check": "fill", "ok": True}]}
 
-        record_repair_log(self.log_path, attempt1)
-        record_repair_log(self.log_path, attempt2)
-        result = record_repair_log(self.log_path, attempt3)
+        record_repair_log(self.log_path, attempt1, "run1")
+        record_repair_log(self.log_path, attempt2, "run1")
+        result = record_repair_log(self.log_path, attempt3, "run1")
 
         attempts = result["attempts"]
         self.assertEqual(len(attempts), 3)
         self.assertEqual([a["attempt"] for a in attempts], [1, 2, 3])
+        self.assertTrue(all(a["run_id"] == "run1" and a["ts"] for a in attempts))
         self.assertEqual(attempts[0]["failing_checks"], ["overfull"])
         self.assertEqual(attempts[1]["failing_checks"], ["fill"])
         self.assertEqual(attempts[2]["failing_checks"], [])
@@ -103,6 +104,46 @@ class RepairLogTests(unittest.TestCase):
 
         on_disk = json.loads(self.log_path.read_text())
         self.assertEqual(on_disk, attempts)
+
+    def test_same_slug_rerun_resets_instead_of_continuing_old_run(self):
+        # Re-tailoring the same posting reuses build/$SLUG.repair_log.json;
+        # a new $RUN_ID must start at attempt 1, not continue the old count.
+        failing = {"ok": False, "compile": {"ok": True},
+                   "checks": [{"check": "overfull", "ok": False}]}
+        passing = {"ok": True, "compile": {"ok": True}, "checks": []}
+        record_repair_log(self.log_path, failing, "old-run")
+        record_repair_log(self.log_path, passing, "old-run")
+
+        result = record_repair_log(self.log_path, passing, "new-run")
+
+        attempts = result["attempts"]
+        self.assertEqual(len(attempts), 1)
+        self.assertEqual(attempts[0]["attempt"], 1)
+        self.assertEqual(attempts[0]["run_id"], "new-run")
+        self.assertEqual(json.loads(self.log_path.read_text()), attempts)
+
+    def test_cli_scopes_repair_log_by_timer_scope(self):
+        import subprocess
+        import sys
+        root = Path(self.temp.name)
+        tex = root / "r.tex"
+        tex.write_text("\\documentclass{article}\\begin{document}x\\end{document}")
+        fake = root / "tectonic"
+        fake.write_text("#!/bin/sh\nexit 1\n")
+        fake.chmod(0o755)
+        script = Path(__file__).with_name("compile_verify.py")
+
+        def run(scope):
+            subprocess.run([sys.executable, str(script), str(tex), str(root / "r.pdf"),
+                            "--tectonic", str(fake), "--repair-log", str(self.log_path),
+                            "--timer-scope", scope], capture_output=True)
+
+        run("A")
+        run("A")
+        self.assertEqual([a["attempt"] for a in json.loads(self.log_path.read_text())], [1, 2])
+        run("B")
+        on_disk = json.loads(self.log_path.read_text())
+        self.assertEqual([(a["run_id"], a["attempt"]) for a in on_disk], [("B", 1)])
 
     def test_record_repair_log_survives_corrupt_existing_file(self):
         self.log_path.write_text("not json")

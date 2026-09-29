@@ -337,33 +337,16 @@ Read `templates/jakes_resume.tex` and fill every `<<PLACEHOLDER>>` into
   what the layout actually requires is evidence given away for free. Aim for
   the longest left side that compiles clean, not the shortest one that
   obviously will.
-  - **Write the first draft of the left side conservatively, not from the
-    full `tech:` array.** Cold-run measurement (`build/*.repair_log.json`
-    across the frozen eval cases) found `overfull` and the resulting
-    `page_count` overflow were, by a wide margin, the most common reasons a
-    run needed any recompile at all — and every observed case traced to a
-    project row where the *initial* draft pasted the full frontmatter
-    `tech:` list plus a title parenthetical, guaranteeing a repair before
-    even reaching Step 6. Skip that guaranteed-fail first draft: for any
-    project whose `repo:`/`demo:` link is long, open with 2-3 of the most
-    JD-relevant tech items and no title parenthetical, then use the spare
-    room a clean first compile leaves (state below is well under the fill
-    band) to add items back — same "longest side that compiles clean" goal,
-    reached by expanding a row that already passed instead of shrinking one
-    that already failed.
-  **Do not also switch to tightened itemsep spacing as a first-draft
-  default to "make extra room."** That was tried in the same measurement
-  round (proactively applying Step 6's `itemsep=1pt, topsep=2pt, parsep=0pt`
-  remedy from the first draft, instead of only after a page-count failure)
-  and traded one defect class for a worse one: `overfull`/`page_count`
-  failures dropped to zero, but every single cold run then under-filled
-  (`fill` check, all landing 690-715 against a >=720 floor) and needed a
-  content-adding repair anyway — the fill-failure rate went from 0-of-3 runs
-  to 3-of-3. Net repair attempts per run did drop on average, but at the
-  cost of trading the one defect class this rule exists to reduce for the
-  one Step 6 already calls "the most common defect in this repo's output."
-  Leave the itemsep tightening as Step 6's reactive remedy only, and rely on
-  writing the conservative first draft above instead.
+  - **Draft the left side conservatively; don't start from the full
+    `tech:` array.** Keep title + tech list + link display text to about 95
+    characters combined; past ~100, an overfull row is likely. For a long
+    link such as `github.com/damienwin/Basic-Recognition-NeuralNetwork` (51
+    characters),
+    that means no title parenthetical and the 2-3 most JD-relevant tech
+    items; add items back one at a time while the row still compiles clean.
+    Drafting from the full list makes an overfull repair near-certain. Don't
+    buy room by applying Step 6's tightened `itemsep` in the first draft —
+    that remedy stays reactive because it tends to under-fill the page.
 
 Mark the render step finished so the .tex authoring time is measured apart
 from compile and verification:
@@ -386,15 +369,15 @@ code is authoritative), writes the log, runs every `verify_resume_pdf.py`
 check, and exits nonzero if either step failed. (Tectonic pulls packages on
 demand. Missing tools: `brew install tectonic`, `brew install poppler`.)
 
-**Always pass `--repair-log build/$SLUG.repair_log.json`, on every call in
-this step including repairs.** `--json-out` is overwritten on each recompile
-and only ever shows the last attempt; `--repair-log` appends instead, so it's
-the only record of which checks actually failed across this run's repair
-loop. It's what lets a future run derive real heuristics instead of guessing.
+`--json-out` is overwritten on every recompile; `--repair-log` appends one
+record per attempt (failing check names, `run_id` = `$RUN_ID` from
+`--timer-scope`, timestamp), so it is the only record of which checks failed
+across this run's repair loop. Records from an earlier run of the same slug
+are dropped, so attempt numbers restart at 1 per run.
 
-On any failure, fix the `.tex` and rerun `compile_verify.py` (same
-`--repair-log` path) with `--timer-label repair`, so the repair loop is timed
-separately from the first pass.
+On any failure, fix the `.tex` and rerun the same command with
+`--timer-label repair` (keep `--repair-log` and `--timer-scope`), so the
+repair loop is timed and logged separately from the first pass.
 
 **`verify_resume_pdf.py` exists because page count alone is not proof of
 completeness.** Observed live 2026-09-01 (Idler tailoring run): an
@@ -484,7 +467,7 @@ fix the `.tex`, recompile, and re-verify on any failure.
    it isn't one.
 
 Compilation errors → read the output, fix the `.tex`, rerun `compile_verify.py`
-with `--timer-label repair` (same `--repair-log build/$SLUG.repair_log.json`).
+with `--timer-label repair` (same `--repair-log` and `--timer-scope`).
 
 ## Step 6b — One final semantic/readability review (optional, default off)
 
