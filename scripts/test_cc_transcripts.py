@@ -217,6 +217,20 @@ class FindTranscriptsTests(unittest.TestCase):
             names = sorted(p.name for p in found)
             self.assertEqual(names, ["agent-deadbeef1.jsonl", "session-abc.jsonl"])
 
+    def test_subagent_turns_get_their_own_attribution_scope(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sub_dir = Path(tmp) / "s1" / "subagents"
+            sub_dir.mkdir(parents=True)
+            sub = sub_dir / "agent-abc.jsonl"
+            sub.write_text(assistant_line(session_id="s1", request_id="r1") + "\n")
+            top = Path(tmp) / "s1.jsonl"
+            top.write_text(assistant_line(session_id="s1", request_id="r2") + "\n")
+            (sub_turn,), _ = parse_transcript(sub)
+            (top_turn,), _ = parse_transcript(top)
+            self.assertEqual(sub_turn.session_id, "s1")
+            self.assertEqual(sub_turn.attribution_scope, "s1/agent-abc")
+            self.assertEqual(top_turn.attribution_scope, "s1")
+
     def test_subagent_transcripts_included_under_all_projects(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

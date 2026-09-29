@@ -28,12 +28,14 @@ from cc_transcripts import Turn
 
 def turn(session_id="s1", timestamp="2026-08-12T00:00:00.000Z", skill="tailor-resume",
          model="claude-opus-5", input_tokens=0, output_tokens=100,
-         cache_write_5m=0, cache_write_1h=0, cache_read=0, request_id=None):
+         cache_write_5m=0, cache_write_1h=0, cache_read=0, request_id=None,
+         scope=""):
     return Turn(
         session_id=session_id, timestamp=timestamp, skill=skill, model=model,
         input_tokens=input_tokens, output_tokens=output_tokens,
         cache_write_5m=cache_write_5m, cache_write_1h=cache_write_1h,
         cache_read=cache_read, request_id=request_id, is_sidechain=False,
+        scope=scope,
     )
 
 
@@ -178,6 +180,70 @@ class BuildRunsTests(unittest.TestCase):
                            board="new-grad", categories=["swe", "quant"])]
         runs = build_runs(anchors, turns)
         self.assertEqual(runs[0]["scan_type"], "new-grad:swe+quant")
+
+
+class SubagentScopeTests(unittest.TestCase):
+    """Subagent transcripts share the parent's sessionId; each subagent file
+    must be its own attribution scope."""
+
+    def test_concurrent_tagged_forks_are_attributed_to_their_own_runs(self):
+        # Two fan-out forks in one session, both running tailor-resume,
+        # interleaved in time. Fork A logs its anchor first.
+        a, b = "s1/agent-aaa", "s1/agent-bbb"
+        turns = [
+            turn(timestamp="2026-08-12T00:00:00.000Z", output_tokens=1, request_id="a1", scope=a),
+            turn(timestamp="2026-08-12T00:00:30.000Z", output_tokens=10, request_id="b1", scope=b),
+            turn(timestamp="2026-08-12T00:01:00.000Z", output_tokens=2, request_id="a2", scope=a),
+            turn(timestamp="2026-08-12T00:01:30.000Z", output_tokens=20, request_id="b2", scope=b),
+            turn(timestamp="2026-08-12T00:02:00.000Z", output_tokens=4, request_id="a3", scope=a),
+            turn(timestamp="2026-08-12T00:03:00.000Z", output_tokens=40, request_id="b3", scope=b),
+            # parent session is idle-ish but has an untagged turn late on
+            turn(timestamp="2026-08-12T00:03:05.000Z", skill=None, output_tokens=999, request_id="p1"),
+        ]
+        anchors = [
+            anchor(timestamp="2026-08-12T00:02:01.000Z", company="A"),
+            anchor(timestamp="2026-08-12T00:03:01.000Z", company="B"),
+        ]
+        runs = build_runs(anchors, turns)
+        by_company = {r["company"]: r for r in runs}
+        self.assertEqual(by_company["A"]["tokens"]["output"], 1 + 2 + 4)
+        self.assertEqual(by_company["B"]["tokens"]["output"], 10 + 20 + 40)
+
+    def test_untagged_subagent_turns_do_not_bridge_a_parent_gap(self):
+        # Parent: tailor-resume at 00:00, then a 20-minute pause, then a new
+        # tailor-resume run at 00:20. An untagged subagent in the same
+        # session is active during the pause; its turns must not stitch the
+        # two parent bursts into one run window.
+        sub = "s1/agent-ccc"
+        turns = [
+            turn(timestamp="2026-08-12T00:00:00.000Z", output_tokens=999, request_id="old"),
+            turn(timestamp="2026-08-12T00:05:00.000Z", skill=None, request_id="x1", scope=sub),
+            turn(timestamp="2026-08-12T00:10:00.000Z", skill=None, request_id="x2", scope=sub),
+            turn(timestamp="2026-08-12T00:15:00.000Z", skill=None, request_id="x3", scope=sub),
+            turn(timestamp="2026-08-12T00:20:00.000Z", output_tokens=50, request_id="new"),
+        ]
+        runs = build_runs([anchor(timestamp="2026-08-12T00:20:00.000Z")], turns)
+        self.assertEqual(runs[0]["turns"], 1)
+        self.assertEqual(runs[0]["tokens"]["output"], 50)
+        self.assertEqual(runs[0]["duration_s"], 0.0)
+
+
+class RunIdTests(unittest.TestCase):
+    def test_same_second_anchors_get_distinct_run_ids(self):
+        anchors = [
+            anchor(timestamp="2026-08-12T00:05:00Z", company="A"),
+            anchor(timestamp="2026-08-12T00:05:00Z", company="B"),
+        ]
+        ids = [r["run_id"] for r in build_runs(anchors, [])]
+        self.assertEqual(len(set(ids)), 2)
+
+    def test_run_scope_disambiguates_and_exclusion_targets_one_fork(self):
+        anchors = [
+            anchor(timestamp="2026-08-12T00:05:00Z", run_scope="r1"),
+            anchor(timestamp="2026-08-12T00:05:00Z", run_scope="r2"),
+        ]
+        runs = build_runs(anchors, [], {"resume_tailor-2026-08-12T00:05:00Z-r2": "bad"})
+        self.assertEqual([r["excluded"] for r in runs], [False, True])
 
 
 class ExclusionTests(unittest.TestCase):

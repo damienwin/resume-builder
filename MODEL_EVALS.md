@@ -281,11 +281,20 @@ before/after comparison follows this protocol instead:
   audit, and `model_eval.py aggregate()` / `build_run_metrics.py` /
   `metrics_summary.py --perf`/`--ab` / `build_metrics_dashboard.py` all skip
   it the same way.
-- **Status-aware aggregation.** `model_eval.py report` only feeds
-  `p50_latency_s`/cost from `status: success` runs into the medians by
-  default — a failed or partial run's latency is often an early-abort
-  artifact, not a real measurement of the thing being compared. Pass
+- **Status-aware aggregation.** By default `model_eval.py report` computes
+  `p50_latency_s`, `mean_cost_usd`, and the exact-token aggregates
+  (`mean_exact_*`, `mean_cache_hit_rate`, `token_coverage`) from
+  `status: success` runs only — a failed or partial run's latency and
+  tokens are often early-abort artifacts, not a measurement of the thing
+  being compared. `runs` and `success_rate` still count every run, and ATS,
+  human, judge, and audit aggregates are unfiltered. Pass
   `--include-failed` when failure behavior itself is what's being measured.
+- **Run ids for exclusion.** A `runs.jsonl` run id is
+  `<event>-<timestamp>`, plus `-<run_scope>` for records whose
+  `finalize_resume.py` call passed `--timer-scope` (the per-run `$RUN_ID`).
+  Timestamps are one-second precision, so older same-second records without
+  a `run_scope` are disambiguated as `#2`, `#3`, ... in `metrics.jsonl`
+  order — copy the id from `runs.jsonl` rather than constructing it.
 - **Report n, not just the point estimate.** State how many cold runs fed
   each number in this document and in any Phase 4 write-up; a ≥10%
   keep-rule decision on n=1 is not a decision, it's a coin flip.

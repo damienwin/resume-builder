@@ -475,7 +475,9 @@ class EvalStore:
                   include_failed: bool = False) -> List[Dict[str, Any]]:
         """Group and summarize model_eval_run events.
 
-        By default only "success" runs feed the latency/cost/token medians —
+        By default only "success" runs feed p50_latency_s, mean_cost_usd, and
+        every exact-token aggregate (mean_exact_*, mean_cache_hit_rate,
+        token_coverage) —
         a "failed" or "partial" run's latency (often near-zero, an early
         abort) or missing tokens would otherwise silently drag p50_latency_s
         and mean_cost_usd toward numbers that don't describe a completed
@@ -526,12 +528,14 @@ class EvalStore:
 
         rows = []
         for key, runs in sorted(groups.items()):
-            # Latency/cost medians default to success-only: a failed/partial
+            # Latency, cost, and exact-token aggregates default to
+            # success-only: a failed/partial
             # run's latency is often an early-abort artifact (near-zero or
             # missing), and blending it in silently drags p50_latency_s and
             # mean_cost_usd toward numbers that don't describe a completed
             # run. "runs"/"success_rate" below still count every run in the
-            # group — only the latency/cost aggregates are status-filtered.
+            # group — only latency/cost/exact-token aggregates are filtered;
+            # ATS, human, judge, and audit aggregates still use every run.
             status_filtered = runs if include_failed else [
                 run for run in runs if run.get("status") == "success"
             ]
@@ -742,8 +746,8 @@ def build_parser() -> argparse.ArgumentParser:
     report.add_argument("--json", action="store_true")
     report.add_argument("--by-case", action="store_true")
     report.add_argument("--include-failed", action="store_true",
-                        help="blend failed/partial runs into latency/cost medians "
-                             "instead of the success-only default")
+                        help="blend failed/partial runs into latency, cost, and "
+                             "exact-token aggregates instead of the success-only default")
     return parser
 
 

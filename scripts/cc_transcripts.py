@@ -29,18 +29,21 @@ job-scan's fan-out, etc.) writes its own turns to
 session's own .jsonl. find_transcripts() now reads these files too, so their
 tokens are no longer invisible to load_turns()/the CLI summary above.
 
-Those turns carry `attributionSkill: None` (subagents don't get the outer
-session's skill tag), so they land in the "(none)" bucket here and are NOT
-attributed to any specific skill's run by scripts/build_run_metrics.py's
-skill-matching join (which requires `turn.skill == skill`). This was a
-deliberate choice over attempting time-window + originating-file heuristics
-to guess which run a subagent turn belongs to: a wrong guess would silently
-misattribute cost to the wrong skill, which is worse than an honest "not
-attributed." A Phase 4 comparison that needs subagent cost/tokens counted
-against a specific run must either (a) drive that run from a top-level
-session only (no subagent fan-out) so every turn keeps the run's skill tag,
-or (b) treat the subagent total as a repo-wide addendum, not a per-run
-figure, until a skill-tag-on-subagent mechanism exists upstream.
+Subagent turns share the parent's `sessionId`, and most carry
+`attributionSkill: None` — but not all: a fork that invokes a skill itself
+(e.g. a job-scan fan-out fork running tailor-resume) tags its turns with that
+skill. So every Turn also carries a `scope`: "" for a top-level session file,
+"<sessionId>/<agent-file-stem>" for a subagent file. `attribution_scope` is
+what scripts/build_run_metrics.py groups on instead of the raw session id,
+which means:
+  - each subagent file is its own attribution scope, so concurrent forks in
+    one session can't have their turns absorbed into each other's runs, and
+  - a subagent's turns (tagged or untagged) never sit in the parent
+    session's turn list, so they can't bridge the parent's >GAP break and
+    stretch a parent run's window.
+A tagged subagent turn is attributed to a run only through its own scope;
+untagged subagent turns land in the "(none)" bucket and are never
+attributed to any run.
 """
 from __future__ import annotations
 
@@ -80,7 +83,8 @@ THIS_PROJECT_SLUG = slugify_path(REPO_ROOT)
 # carry no real usage and would pollute both latency and token totals.
 SYNTHETIC_MODEL = "<synthetic>"
 
-CACHE_VERSION = 1
+# v2: Turn gained `scope` (per-subagent-file attribution scope).
+CACHE_VERSION = 2
 
 
 @dataclass
@@ -97,6 +101,13 @@ class Turn:
     cache_read: int
     request_id: str | None
     is_sidechain: bool
+    # "" for a top-level session transcript; "<sessionId>/<agent-stem>" for a
+    # subagent transcript (see module docstring).
+    scope: str = ""
+
+    @property
+    def attribution_scope(self) -> str:
+        return self.scope or self.session_id
 
     @property
     def dt(self) -> datetime:
@@ -165,6 +176,7 @@ def parse_transcript(path: Path, start_offset: int = 0) -> tuple[list[Turn], int
     """
     turns: list[Turn] = []
     offset = start_offset
+    is_subagent = path.parent.name == "subagents"
     with path.open("rb") as f:
         f.seek(start_offset)
         for raw in f:
@@ -180,6 +192,8 @@ def parse_transcript(path: Path, start_offset: int = 0) -> tuple[list[Turn], int
                 continue  # a corrupt line is data loss, not a crash
             turn = turn_from_record(record)
             if turn is not None:
+                if is_subagent:
+                    turn.scope = f"{turn.session_id}/{path.stem}"
                 turns.append(turn)
     return turns, offset
 
