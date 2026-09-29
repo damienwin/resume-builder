@@ -16,3 +16,7 @@ knowledge/
 # third-party ATS scoring tool + its output — cloned/generated, not vendored
 tools/
 eval/
+
+# API keys / secrets
+.env
+.env.*
