@@ -337,6 +337,16 @@ Read `templates/jakes_resume.tex` and fill every `<<PLACEHOLDER>>` into
   what the layout actually requires is evidence given away for free. Aim for
   the longest left side that compiles clean, not the shortest one that
   obviously will.
+  - **Draft the left side conservatively; don't start from the full
+    `tech:` array.** Keep title + tech list + link display text to about 95
+    characters combined; past ~100, an overfull row is likely. For a long
+    link such as `github.com/damienwin/Basic-Recognition-NeuralNetwork` (51
+    characters),
+    that means no title parenthetical and the 2-3 most JD-relevant tech
+    items; add items back one at a time while the row still compiles clean.
+    Drafting from the full list makes an overfull repair near-certain. Don't
+    buy room by applying Step 6's tightened `itemsep` in the first draft —
+    that remedy stays reactive because it tends to under-fill the page.
 
 Mark the render step finished so the .tex authoring time is measured apart
 from compile and verification:
