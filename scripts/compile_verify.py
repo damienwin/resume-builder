@@ -86,7 +86,8 @@ def record_repair_log(log_path: Path, report: dict, run_id: str = "") -> dict:
 
 
 def compile_and_verify(tex: Path, pdf: Path, log: Path, min_fill: float = 720.0,
-                       tectonic: str = "tectonic", timeout: float = 180.0) -> dict:
+                       tectonic: str = "tectonic", timeout: float = 180.0,
+                       keywords: Path | None = None) -> dict:
     if shutil.which(tectonic) is None:
         return {"ok": False, "error": f"{tectonic} not found on PATH",
                 "checks": [{"check": "tectonic", "ok": False,
@@ -108,7 +109,7 @@ def compile_and_verify(tex: Path, pdf: Path, log: Path, min_fill: float = 720.0,
     compile_ok = returncode == 0
 
     if pdf.exists():
-        report = verify(tex, pdf, log, min_fill)
+        report = verify(tex, pdf, log, min_fill, keywords)
     else:
         report = {"ok": False, "tex": str(tex), "pdf": str(pdf), "checks": [
             {"check": "extraction", "ok": False,
@@ -130,6 +131,9 @@ def main() -> int:
     ap.add_argument("pdf", type=Path)
     ap.add_argument("--log", type=Path, default=None)
     ap.add_argument("--min-fill", type=float, default=720.0)
+    ap.add_argument("--keywords", type=Path, default=None,
+                    help="agent-written JD-keyword-selection file (checked for "
+                         "presence/non-emptiness only; see verify_resume_pdf.py)")
     ap.add_argument("--tectonic", default="tectonic")
     ap.add_argument("--timeout", type=float, default=180.0)
     ap.add_argument("--json-out", type=Path)
@@ -152,7 +156,7 @@ def main() -> int:
     log = args.log or args.tex.with_suffix(".tectonic.log")
 
     report = compile_and_verify(args.tex, args.pdf, log, args.min_fill,
-                                args.tectonic, args.timeout)
+                                args.tectonic, args.timeout, args.keywords)
 
     if args.json_out:
         args.json_out.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
