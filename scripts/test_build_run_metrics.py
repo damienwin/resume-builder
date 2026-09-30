@@ -4,8 +4,14 @@ against cc_transcripts.py turns into knowledge/runs.jsonl.
 
 Run: python3 scripts/test_build_run_metrics.py
 """
+import io
+import json
+import tempfile
 import unittest
+from contextlib import redirect_stdout
+from pathlib import Path
 
+import build_run_metrics
 from build_run_metrics import (
     CACHE_READ_MULTIPLIER,
     CACHE_WRITE_1H_MULTIPLIER,
@@ -13,6 +19,8 @@ from build_run_metrics import (
     PRICING,
     build_runs,
     cost_for_turn,
+    load_anchors,
+    load_exclusions,
     scan_type_label,
 )
 from cc_transcripts import Turn
@@ -20,12 +28,14 @@ from cc_transcripts import Turn
 
 def turn(session_id="s1", timestamp="2026-08-12T00:00:00.000Z", skill="tailor-resume",
          model="claude-opus-5", input_tokens=0, output_tokens=100,
-         cache_write_5m=0, cache_write_1h=0, cache_read=0, request_id=None):
+         cache_write_5m=0, cache_write_1h=0, cache_read=0, request_id=None,
+         scope=""):
     return Turn(
         session_id=session_id, timestamp=timestamp, skill=skill, model=model,
         input_tokens=input_tokens, output_tokens=output_tokens,
         cache_write_5m=cache_write_5m, cache_write_1h=cache_write_1h,
         cache_read=cache_read, request_id=request_id, is_sidechain=False,
+        scope=scope,
     )
 
 
@@ -170,6 +180,174 @@ class BuildRunsTests(unittest.TestCase):
                            board="new-grad", categories=["swe", "quant"])]
         runs = build_runs(anchors, turns)
         self.assertEqual(runs[0]["scan_type"], "new-grad:swe+quant")
+
+
+class SubagentScopeTests(unittest.TestCase):
+    """Subagent transcripts share the parent's sessionId; each subagent file
+    must be its own attribution scope."""
+
+    def test_concurrent_tagged_forks_are_attributed_to_their_own_runs(self):
+        # Two fan-out forks in one session, both running tailor-resume,
+        # interleaved in time. Fork A logs its anchor first.
+        a, b = "s1/agent-aaa", "s1/agent-bbb"
+        turns = [
+            turn(timestamp="2026-08-12T00:00:00.000Z", output_tokens=1, request_id="a1", scope=a),
+            turn(timestamp="2026-08-12T00:00:30.000Z", output_tokens=10, request_id="b1", scope=b),
+            turn(timestamp="2026-08-12T00:01:00.000Z", output_tokens=2, request_id="a2", scope=a),
+            turn(timestamp="2026-08-12T00:01:30.000Z", output_tokens=20, request_id="b2", scope=b),
+            turn(timestamp="2026-08-12T00:02:00.000Z", output_tokens=4, request_id="a3", scope=a),
+            turn(timestamp="2026-08-12T00:03:00.000Z", output_tokens=40, request_id="b3", scope=b),
+            # parent session is idle-ish but has an untagged turn late on
+            turn(timestamp="2026-08-12T00:03:05.000Z", skill=None, output_tokens=999, request_id="p1"),
+        ]
+        anchors = [
+            anchor(timestamp="2026-08-12T00:02:01.000Z", company="A"),
+            anchor(timestamp="2026-08-12T00:03:01.000Z", company="B"),
+        ]
+        runs = build_runs(anchors, turns)
+        by_company = {r["company"]: r for r in runs}
+        self.assertEqual(by_company["A"]["tokens"]["output"], 1 + 2 + 4)
+        self.assertEqual(by_company["B"]["tokens"]["output"], 10 + 20 + 40)
+
+    def test_untagged_subagent_turns_do_not_bridge_a_parent_gap(self):
+        # Parent: tailor-resume at 00:00, then a 20-minute pause, then a new
+        # tailor-resume run at 00:20. An untagged subagent in the same
+        # session is active during the pause; its turns must not stitch the
+        # two parent bursts into one run window.
+        sub = "s1/agent-ccc"
+        turns = [
+            turn(timestamp="2026-08-12T00:00:00.000Z", output_tokens=999, request_id="old"),
+            turn(timestamp="2026-08-12T00:05:00.000Z", skill=None, request_id="x1", scope=sub),
+            turn(timestamp="2026-08-12T00:10:00.000Z", skill=None, request_id="x2", scope=sub),
+            turn(timestamp="2026-08-12T00:15:00.000Z", skill=None, request_id="x3", scope=sub),
+            turn(timestamp="2026-08-12T00:20:00.000Z", output_tokens=50, request_id="new"),
+        ]
+        runs = build_runs([anchor(timestamp="2026-08-12T00:20:00.000Z")], turns)
+        self.assertEqual(runs[0]["turns"], 1)
+        self.assertEqual(runs[0]["tokens"]["output"], 50)
+        self.assertEqual(runs[0]["duration_s"], 0.0)
+
+
+class RunIdTests(unittest.TestCase):
+    def test_same_second_anchors_get_distinct_run_ids(self):
+        anchors = [
+            anchor(timestamp="2026-08-12T00:05:00Z", company="A"),
+            anchor(timestamp="2026-08-12T00:05:00Z", company="B"),
+        ]
+        ids = [r["run_id"] for r in build_runs(anchors, [])]
+        self.assertEqual(len(set(ids)), 2)
+
+    def test_run_scope_disambiguates_and_exclusion_targets_one_fork(self):
+        anchors = [
+            anchor(timestamp="2026-08-12T00:05:00Z", run_scope="r1"),
+            anchor(timestamp="2026-08-12T00:05:00Z", run_scope="r2"),
+        ]
+        runs = build_runs(anchors, [], {"resume_tailor-2026-08-12T00:05:00Z-r2": "bad"})
+        self.assertEqual([r["excluded"] for r in runs], [False, True])
+
+
+class ExclusionTests(unittest.TestCase):
+    """Exclusions live as append-only `run_exclusion` events in
+    knowledge/metrics.jsonl, not as a field written into runs.jsonl — this
+    script fully regenerates runs.jsonl with "w" mode every run, so anything
+    stored only there would be lost on the next --rebuild."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        root = Path(self.tmp.name)
+        (root / "knowledge").mkdir()
+        self.metrics_path = root / "knowledge" / "metrics.jsonl"
+
+        self._orig_metrics_path = build_run_metrics.METRICS_PATH
+        build_run_metrics.METRICS_PATH = self.metrics_path
+        self.addCleanup(self._restore)
+
+    def _restore(self):
+        build_run_metrics.METRICS_PATH = self._orig_metrics_path
+
+    def _write_metrics(self, records):
+        with self.metrics_path.open("w") as f:
+            for r in records:
+                f.write(json.dumps(r) + "\n")
+
+    def test_exclusion_survives_a_full_regeneration(self):
+        anchor_record = {
+            "event": "resume_tailor",
+            "timestamp": "2026-08-12T00:02:00.000Z",
+            "company": "Acme",
+        }
+        run_id = "resume_tailor-2026-08-12T00:02:00.000Z"
+        self._write_metrics([
+            anchor_record,
+            {"event": "run_exclusion", "timestamp": "2026-08-12T00:03:00.000Z",
+             "run_id": run_id, "reason": "invalid fixture"},
+        ])
+
+        turns = [
+            Turn(session_id="s1", timestamp="2026-08-12T00:00:00.000Z",
+                 skill="tailor-resume", model="claude-opus-5", input_tokens=0,
+                 output_tokens=50, cache_write_5m=0, cache_write_1h=0,
+                 cache_read=0, request_id="r1", is_sidechain=False),
+        ]
+
+        # Regenerate twice, exactly as build_run_metrics.py main() does
+        # (load_anchors + load_exclusions + build_runs, from scratch each
+        # time) — the exclusion must show up identically both times, proving
+        # it isn't lost on the "regeneration" the module's own docstring
+        # calls out.
+        for _ in range(2):
+            anchors = load_anchors()
+            exclusions = load_exclusions()
+            runs = build_runs(anchors, turns, exclusions)
+            self.assertEqual(len(runs), 1)
+            self.assertTrue(runs[0]["excluded"])
+            self.assertEqual(runs[0]["exclude_reason"], "invalid fixture")
+
+    def test_unexcluded_run_is_not_flagged(self):
+        self._write_metrics([
+            {"event": "resume_tailor", "timestamp": "2026-08-12T00:02:00.000Z"},
+        ])
+        anchors = load_anchors()
+        exclusions = load_exclusions()
+        self.assertEqual(exclusions, {})
+        runs = build_runs(anchors, [], exclusions)
+        self.assertFalse(runs[0]["excluded"])
+        self.assertIsNone(runs[0]["exclude_reason"])
+
+    def test_metrics_summary_perf_honors_the_same_exclusion(self):
+        # metrics_summary.py --perf reads knowledge/runs.jsonl (the output of
+        # this script) and must drop the same run this script flagged, so
+        # both reporting paths agree on what counts.
+        import metrics_summary
+
+        anchor_record = {
+            "event": "resume_tailor",
+            "timestamp": "2026-08-12T00:02:00.000Z",
+        }
+        run_id = "resume_tailor-2026-08-12T00:02:00.000Z"
+        self._write_metrics([
+            anchor_record,
+            {"event": "run_exclusion", "timestamp": "2026-08-12T00:03:00.000Z",
+             "run_id": run_id, "reason": "bad run"},
+        ])
+        turns = [
+            Turn(session_id="s1", timestamp="2026-08-12T00:00:00.000Z",
+                 skill="tailor-resume", model="claude-opus-5", input_tokens=0,
+                 output_tokens=50, cache_write_5m=0, cache_write_1h=0,
+                 cache_read=0, request_id="r1", is_sidechain=False),
+        ]
+        anchors = load_anchors()
+        exclusions = load_exclusions()
+        runs = build_runs(anchors, turns, exclusions)
+        self.assertTrue(runs[0]["excluded"])
+
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            metrics_summary.print_perf_table(runs)
+        output = buf.getvalue()
+        self.assertIn("no runs with measured duration in this slice", output)
+        self.assertIn("1 run(s) excluded via run_exclusion events", output)
 
 
 if __name__ == "__main__":

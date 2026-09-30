@@ -10,10 +10,13 @@ import unittest
 from pathlib import Path
 
 from cc_transcripts import (
+    REPO_ROOT,
+    THIS_PROJECT_SLUG,
     dedupe,
     find_transcripts,
     load_turns,
     parse_transcript,
+    slugify_path,
     turn_from_record,
 )
 
@@ -157,6 +160,23 @@ class DedupeTests(unittest.TestCase):
         self.assertEqual([t.request_id for t in out], ["req_1", "req_2"])
 
 
+class SlugifyPathTests(unittest.TestCase):
+    def test_every_non_alnum_character_maps_to_a_dash(self):
+        # Claude Code's real rule: not just '/' — every non-alphanumeric
+        # character, including '.', '_', and spaces.
+        path = Path("/Users/damien.win/my_repo/resume builder")
+        self.assertEqual(
+            slugify_path(path),
+            "-Users-damien-win-my-repo-resume-builder",
+        )
+
+    def test_this_project_slug_is_derived_from_repo_root_not_hardcoded(self):
+        # Regression guard for the stale-hardcoded-slug bug: THIS_PROJECT_SLUG
+        # must always equal slugify_path(REPO_ROOT), never a fixed string
+        # baked in from a previous checkout path.
+        self.assertEqual(THIS_PROJECT_SLUG, slugify_path(REPO_ROOT))
+
+
 class FindTranscriptsTests(unittest.TestCase):
     def test_missing_root_returns_empty(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -182,6 +202,42 @@ class FindTranscriptsTests(unittest.TestCase):
             (root / "proj-b").mkdir()
             (root / "proj-a" / "a.jsonl").write_text("")
             (root / "proj-b" / "b.jsonl").write_text("")
+            found = find_transcripts(root, all_projects=True)
+            self.assertEqual(len(found), 2)
+
+    def test_subagent_transcripts_are_included(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            session_dir = root / THIS_PROJECT_SLUG / "session-abc" / "subagents"
+            session_dir.mkdir(parents=True)
+            (root / THIS_PROJECT_SLUG / "session-abc.jsonl").write_text("")
+            (session_dir / "agent-deadbeef1.jsonl").write_text("")
+            (session_dir / "agent-deadbeef1.meta.json").write_text("{}")
+            found = find_transcripts(root, all_projects=False)
+            names = sorted(p.name for p in found)
+            self.assertEqual(names, ["agent-deadbeef1.jsonl", "session-abc.jsonl"])
+
+    def test_subagent_turns_get_their_own_attribution_scope(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sub_dir = Path(tmp) / "s1" / "subagents"
+            sub_dir.mkdir(parents=True)
+            sub = sub_dir / "agent-abc.jsonl"
+            sub.write_text(assistant_line(session_id="s1", request_id="r1") + "\n")
+            top = Path(tmp) / "s1.jsonl"
+            top.write_text(assistant_line(session_id="s1", request_id="r2") + "\n")
+            (sub_turn,), _ = parse_transcript(sub)
+            (top_turn,), _ = parse_transcript(top)
+            self.assertEqual(sub_turn.session_id, "s1")
+            self.assertEqual(sub_turn.attribution_scope, "s1/agent-abc")
+            self.assertEqual(top_turn.attribution_scope, "s1")
+
+    def test_subagent_transcripts_included_under_all_projects(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            session_dir = root / "proj-a" / "session-1" / "subagents"
+            session_dir.mkdir(parents=True)
+            (root / "proj-a" / "session-1.jsonl").write_text("")
+            (session_dir / "agent-xyz.jsonl").write_text("")
             found = find_transcripts(root, all_projects=True)
             self.assertEqual(len(found), 2)
 

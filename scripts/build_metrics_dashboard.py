@@ -166,7 +166,14 @@ def build_performance(runs):
     """Latency, token, and cost aggregates for the dashboard's performance
     panels. Returns has_data: false (rather than raising) when runs.jsonl
     doesn't exist yet or nothing in it has token coverage — a fresh clone or
-    a repo that hasn't run build_run_metrics.py must still render."""
+    a repo that hasn't run build_run_metrics.py must still render.
+
+    Runs flagged "excluded" (a run_exclusion event joined in by
+    build_run_metrics.py) are dropped before any stat is computed, so this
+    panel agrees with scripts/metrics_summary.py --perf/--ab on which runs
+    count."""
+    total_before_exclusion = len(runs)
+    runs = [r for r in runs if not r.get("excluded")]
     costed = [r for r in runs if r.get("cost_usd") is not None]
     timed = [r for r in runs if r.get("duration_s") is not None]
     hit_rates = [r["cache_hit_rate"] for r in runs if r.get("cache_hit_rate") is not None]
@@ -234,6 +241,7 @@ def build_performance(runs):
         "scan_breakdown": scan_breakdown,
         "covered_runs": len([r for r in runs if r.get("tokens") is not None]),
         "total_runs": len(runs),
+        "excluded_runs": total_before_exclusion - len(runs),
     }
 
 

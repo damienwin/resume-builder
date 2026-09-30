@@ -107,6 +107,10 @@ def finalize(bullets: Path, case_path: Path, knowledge_root: Path,
         # Close the timer only now that the gate has passed, and fold its
         # duration/steps into the metric so Step 9's separate finish+log calls
         # collapse into this one. An explicit value in the caller's JSON wins.
+        # The per-run random token disambiguates build_run_metrics.py's
+        # run_id when two forks log in the same second (see make_run_id).
+        if timer_scope:
+            fields.setdefault("run_scope", timer_scope)
         if timer_skill:
             finished = run_timer.finish(timer_skill, timer_scope)
             result["timer"] = finished

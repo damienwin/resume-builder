@@ -20,11 +20,36 @@ Parsing 285 MB of transcripts on every run is slow enough that nobody would run
 it, so results are cached per file in knowledge/.cc_transcript_cache.json and
 only bytes appended since the last pass are parsed. --rebuild forces a full
 re-read.
+
+## Subagent transcripts and attribution
+
+A subagent (a fork Claude Code dispatches mid-session — a review subagent,
+job-scan's fan-out, etc.) writes its own turns to
+<slug>/<session>/subagents/agent-*.jsonl, entirely separate from the parent
+session's own .jsonl. find_transcripts() now reads these files too, so their
+tokens are no longer invisible to load_turns()/the CLI summary above.
+
+Subagent turns share the parent's `sessionId`, and most carry
+`attributionSkill: None` — but not all: a fork that invokes a skill itself
+(e.g. a job-scan fan-out fork running tailor-resume) tags its turns with that
+skill. So every Turn also carries a `scope`: "" for a top-level session file,
+"<sessionId>/<agent-file-stem>" for a subagent file. `attribution_scope` is
+what scripts/build_run_metrics.py groups on instead of the raw session id,
+which means:
+  - each subagent file is its own attribution scope, so concurrent forks in
+    one session can't have their turns absorbed into each other's runs, and
+  - a subagent's turns (tagged or untagged) never sit in the parent
+    session's turn list, so they can't bridge the parent's >GAP break and
+    stretch a parent run's window.
+A tagged subagent turn is attributed to a run only through its own scope;
+untagged subagent turns land in the "(none)" bucket and are never
+attributed to any run.
 """
 from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from dataclasses import dataclass, asdict
 from datetime import datetime
@@ -34,15 +59,32 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 CACHE_PATH = REPO_ROOT / "knowledge" / ".cc_transcript_cache.json"
 
 DEFAULT_TRANSCRIPT_ROOT = Path.home() / ".claude" / "projects"
-# The transcript directory for this repo: Claude Code slugifies the cwd by
-# replacing every path separator with a dash.
-THIS_PROJECT_SLUG = "-Users-damienwin-claude-projects-resume-builder"
+
+
+def slugify_path(path: Path) -> str:
+    """Claude Code's actual project-directory slugify rule: every
+    non-alphanumeric character (not just '/') maps to '-'.
+
+    A previous hardcoded slug here was stale — it named a directory from an
+    earlier checkout location. That stale directory still exists on disk, so
+    a "does the directory exist" check alone would never have caught the
+    bug: it silently read a different checkout's transcripts, not zero
+    transcripts. Deriving the slug from REPO_ROOT keeps it correct across
+    checkout moves/renames instead of needing a manual update each time.
+    """
+    return re.sub(r"[^A-Za-z0-9]", "-", str(path))
+
+
+# The transcript directory for this repo, derived the same way Claude Code
+# derives it from the cwd it was launched in.
+THIS_PROJECT_SLUG = slugify_path(REPO_ROOT)
 
 # Turns the model didn't actually produce (interrupts, local errors). They
 # carry no real usage and would pollute both latency and token totals.
 SYNTHETIC_MODEL = "<synthetic>"
 
-CACHE_VERSION = 1
+# v2: Turn gained `scope` (per-subagent-file attribution scope).
+CACHE_VERSION = 2
 
 
 @dataclass
@@ -59,6 +101,13 @@ class Turn:
     cache_read: int
     request_id: str | None
     is_sidechain: bool
+    # "" for a top-level session transcript; "<sessionId>/<agent-stem>" for a
+    # subagent transcript (see module docstring).
+    scope: str = ""
+
+    @property
+    def attribution_scope(self) -> str:
+        return self.scope or self.session_id
 
     @property
     def dt(self) -> datetime:
@@ -127,6 +176,7 @@ def parse_transcript(path: Path, start_offset: int = 0) -> tuple[list[Turn], int
     """
     turns: list[Turn] = []
     offset = start_offset
+    is_subagent = path.parent.name == "subagents"
     with path.open("rb") as f:
         f.seek(start_offset)
         for raw in f:
@@ -142,16 +192,37 @@ def parse_transcript(path: Path, start_offset: int = 0) -> tuple[list[Turn], int
                 continue  # a corrupt line is data loss, not a crash
             turn = turn_from_record(record)
             if turn is not None:
+                if is_subagent:
+                    turn.scope = f"{turn.session_id}/{path.stem}"
                 turns.append(turn)
     return turns, offset
 
 
 def find_transcripts(root: Path, all_projects: bool) -> list[Path]:
+    """Every top-level session transcript, plus every subagent transcript
+    nested under it (<slug>/<session>/subagents/agent-*.jsonl).
+
+    Subagent-driven turns (a fork Claude Code dispatches mid-session, e.g.
+    job-scan's fan-out or a review subagent) are written to their own file
+    under the parent session's directory, entirely separate from the
+    session's own top-level .jsonl. The old glob only ever looked at
+    <slug>/*.jsonl, so every subagent turn was silently unread — this repo's
+    own transcript root has dozens of such files today.
+    """
     if not root.exists():
         return []
     if all_projects:
-        return sorted(root.glob("*/*.jsonl"))
-    return sorted((root / THIS_PROJECT_SLUG).glob("*.jsonl"))
+        project_dirs = [p for p in root.iterdir() if p.is_dir()]
+    else:
+        project_dirs = [root / THIS_PROJECT_SLUG]
+
+    found: list[Path] = []
+    for project_dir in project_dirs:
+        if not project_dir.exists():
+            continue
+        found.extend(project_dir.glob("*.jsonl"))
+        found.extend(project_dir.glob("*/subagents/agent-*.jsonl"))
+    return sorted(found)
 
 
 def load_cache() -> dict:

@@ -263,6 +263,51 @@ class ModelEvalTests(unittest.TestCase):
                 "checks": [{"check": "grounding", "ok": False, "severity": "info"}],
             })
 
+    def test_failed_run_excluded_from_latency_and_cost_by_default(self):
+        for name, latency in (("s1.pdf", 40.0), ("s2.pdf", 60.0)):
+            success_run = self.start_run()
+            self.store.finish_run(
+                success_run, "success", [self._pdf(name)], 100, 25, 5,
+                40, 10, None, "exact", 2, 0, 1, None,
+                latency_s=latency, cost_usd=1.0,
+            )
+        failed_run = self.store.start_run(
+            "backend", "tailor-end-to-end", "example", "example-model",
+            "medium", "pilot-v1", self.store.eval_root / "cases" / "backend.txt",
+        )
+        self.store.finish_run(
+            failed_run, "failed", [self._pdf("failed.pdf")], 1000, 0, None,
+            None, None, None, "exact", None, 0, 0, "aborted early",
+            latency_s=0.01, cost_usd=0.0001,
+        )
+
+        rows_default = self.store.aggregate()
+        self.assertEqual(len(rows_default), 1)
+        row = rows_default[0]
+        # all three runs are still counted for success_rate...
+        self.assertEqual(row["runs"], 3)
+        self.assertAlmostEqual(row["success_rate"], 2 / 3, places=3)
+        # ...but the failed run's near-zero latency/cost must not drag the
+        # median/mean down by default. percentile([40, 60], .5) -> 60.
+        self.assertEqual(row["p50_latency_s"], 60.0)
+        self.assertEqual(row["mean_cost_usd"], 1.0)
+
+        rows_included = self.store.aggregate(include_failed=True)
+        row_included = rows_included[0]
+        # percentile([0.01, 40, 60], .5) -> 40: the failed run now shifts it.
+        self.assertEqual(row_included["p50_latency_s"], 40.0)
+        self.assertAlmostEqual(row_included["mean_cost_usd"], (2.0 + 0.0001) / 3, places=3)
+        # exact-token means are status-filtered the same way.
+        self.assertEqual(row["token_coverage"], 2)
+        self.assertEqual(row["mean_exact_tokens"], 175)
+        self.assertEqual(row_included["token_coverage"], 3)
+        self.assertEqual(row_included["mean_exact_tokens"], round((175 * 2 + 1000) / 3, 1))
+
+    def _pdf(self, name):
+        path = self.repo_root / name
+        path.write_bytes(b"pdf")
+        return path
+
     def test_append_only_latency_correction_changes_aggregate(self):
         run_id = self.start_run()
         self.finish_run(run_id)

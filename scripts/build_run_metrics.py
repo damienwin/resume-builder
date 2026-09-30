@@ -18,7 +18,15 @@ absorbs any nested tailor-resume turns in that window. Those nested turns
 are still emitted as their own tailor-resume record (flagged nested_in) but
 excluded from top-level apply-vs-tailor-resume sums so nothing double counts.
 
-Safe to delete and regenerate: knowledge/runs.jsonl is entirely derived.
+Safe to delete and regenerate: knowledge/runs.jsonl is entirely derived. That
+also means a run cannot be flagged "exclude this from perf stats" by editing
+a field directly in runs.jsonl — the next --rebuild would silently drop it.
+Instead, log a `run_exclusion` event to the append-only knowledge/metrics.jsonl
+(scripts/log_metric.py run_exclusion '{"run_id": "...", "reason": "..."}')
+and this script joins it back in on every regeneration, same as an anchor.
+scripts/metrics_summary.py (--perf/--ab) and scripts/build_metrics_dashboard.py
+read the same "excluded"/"exclude_reason" fields this script writes, so all
+three reporting paths agree on which runs are excluded.
 
 Usage:
     build_run_metrics.py [--rebuild] [--all-projects]
@@ -89,6 +97,35 @@ def load_anchors() -> list[dict]:
     return anchors
 
 
+def load_exclusions() -> dict[str, str]:
+    """run_id -> most recent reason, from append-only `run_exclusion` events
+    in knowledge/metrics.jsonl.
+
+    Exclusions live here (not as a field written into runs.jsonl) because
+    this script fully regenerates runs.jsonl with "w" mode on every run —
+    anything stored only in that file would be erased on the next rebuild.
+    A later event for the same run_id (e.g. a corrected reason) wins; an
+    exclusion is never removed by this loader, only re-logged with a new
+    reason — un-excluding a run means the operator stops relying on the
+    latest event's reason, not deleting history.
+    """
+    if not METRICS_PATH.exists():
+        return {}
+    exclusions: dict[str, str] = {}
+    with METRICS_PATH.open() as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            record = json.loads(line)
+            if record.get("event") != "run_exclusion":
+                continue
+            run_id = record.get("run_id")
+            if run_id:
+                exclusions[run_id] = record.get("reason")
+    return exclusions
+
+
 def scan_type_label(anchor: dict) -> str:
     """e.g. "new-grad:swe+dsa" — the breakdown key for job-scan runs."""
     board = anchor.get("board") or "unknown-board"
@@ -108,24 +145,63 @@ def cost_for_turn(turn: Turn) -> float | None:
     return cost
 
 
-def session_at_or_before(turns_by_session: dict[str, list[Turn]], anchor_dt) -> str | None:
-    """The session whose latest turn at-or-before anchor_dt is closest to it."""
+def make_run_id(anchor: dict, seen: dict[str, int]) -> str:
+    """Stable id for an anchor, which is what a `run_exclusion` event names.
+
+    Base form is "<event>-<timestamp>". Anchor timestamps have one-second
+    precision, so two parallel forks finishing in the same second would
+    collide — new records written by scripts/finalize_resume.py carry the
+    run's random `run_scope` token (the same $RUN_ID used for run_timer
+    --scope), appended here to disambiguate. Older records without it that
+    still collide get "#2", "#3", ... in metrics.jsonl order; that suffix
+    is deterministic for an unchanged file but is only as stable as the
+    order of those same-second records, so prefer excluding by a
+    run_scope-bearing id where one exists.
+    """
+    base = f"{anchor.get('event')}-{anchor['timestamp']}"
+    if anchor.get("run_scope"):
+        base = f"{base}-{anchor['run_scope']}"
+    seen[base] = seen.get(base, 0) + 1
+    return base if seen[base] == 1 else f"{base}#{seen[base]}"
+
+
+def _closest_scope(turns_by_session, anchor_dt, skill=None, max_age=None):
     best_session = None
     best_dt = None
     for session_id, turns in turns_by_session.items():
         # turns are sorted ascending; find the last one <= anchor_dt
         candidate = None
         for turn in turns:
-            if turn.dt <= anchor_dt:
-                candidate = turn
-            else:
+            if turn.dt > anchor_dt:
                 break
+            if skill is None or turn.skill == skill:
+                candidate = turn
         if candidate is None:
+            continue
+        if max_age is not None and anchor_dt - candidate.dt > max_age:
             continue
         if best_dt is None or candidate.dt > best_dt:
             best_dt = candidate.dt
             best_session = session_id
     return best_session
+
+
+def session_at_or_before(turns_by_session: dict[str, list[Turn]], anchor_dt,
+                         skill: str | None = None) -> str | None:
+    """The attribution scope (a top-level session, or one subagent file —
+    see Turn.attribution_scope) an anchor belongs to.
+
+    With `skill`, prefer the scope whose latest turn *tagged with that skill*
+    at-or-before anchor_dt is closest (within GAP): concurrent fan-out forks
+    are separate scopes, and without this preference an anchor would go to
+    whichever scope merely had any turn last — e.g. the parent session, or a
+    sibling fork. Falls back to the scope with the closest turn of any skill
+    (which the nested_in fallback in build_runs relies on)."""
+    if skill is not None:
+        preferred = _closest_scope(turns_by_session, anchor_dt, skill, GAP)
+        if preferred is not None:
+            return preferred
+    return _closest_scope(turns_by_session, anchor_dt)
 
 
 def collect_run_turns(session_turns: list[Turn], anchor_dt, skill: str,
@@ -161,10 +237,15 @@ def collect_run_turns(session_turns: list[Turn], anchor_dt, skill: str,
     return collected
 
 
-def build_runs(anchors: list[dict], all_turns: list[Turn]) -> list[dict]:
+def build_runs(anchors: list[dict], all_turns: list[Turn],
+                exclusions: dict[str, str] | None = None) -> list[dict]:
+    # Keyed by attribution scope, not raw session id: subagent transcripts
+    # share their parent's sessionId, but each subagent file is its own scope
+    # so concurrent forks can't absorb each other's turns and a subagent's
+    # turns can't bridge a >GAP pause in the parent's list.
     turns_by_session: dict[str, list[Turn]] = defaultdict(list)
     for turn in all_turns:
-        turns_by_session[turn.session_id].append(turn)
+        turns_by_session[turn.attribution_scope].append(turn)
     for turns in turns_by_session.values():
         turns.sort(key=lambda t: t.timestamp)
 
@@ -185,7 +266,7 @@ def build_runs(anchors: list[dict], all_turns: list[Turn]) -> list[dict]:
         if a["_skill"] != "apply":
             continue
         a_dt = parse_ts(a["timestamp"])
-        sid = session_at_or_before(turns_by_session, a_dt)
+        sid = session_at_or_before(turns_by_session, a_dt, "apply")
         if sid is None:
             continue
         floor = apply_floor_dt.get(sid, a_dt - timedelta(days=3650))
@@ -198,14 +279,19 @@ def build_runs(anchors: list[dict], all_turns: list[Turn]) -> list[dict]:
             if start_dt <= t.dt <= a_dt and t.skill == "tailor-resume":
                 absorbed_turn_ids.add((sid, t.timestamp, t.request_id or ""))
 
+    exclusions = exclusions or {}
+    seen_run_ids: dict[str, int] = {}
     runs = []
     for idx, anchor in enumerate(anchors):
         skill = anchor["_skill"]
         anchor_dt = parse_ts(anchor["timestamp"])
-        session_id = session_at_or_before(turns_by_session, anchor_dt)
+        session_id = session_at_or_before(turns_by_session, anchor_dt, skill)
 
+        run_id = make_run_id(anchor, seen_run_ids)
         run = {
-            "run_id": f"{anchor.get('event')}-{anchor['timestamp']}",
+            "run_id": run_id,
+            "excluded": run_id in exclusions,
+            "exclude_reason": exclusions.get(run_id),
             "event": anchor.get("event"),
             "skill": skill,
             "ended_at": anchor["timestamp"],
@@ -327,7 +413,8 @@ def main():
 
     anchors = load_anchors()
     turns = load_turns(all_projects=args.all_projects, rebuild=args.rebuild)
-    runs = build_runs(anchors, turns)
+    exclusions = load_exclusions()
+    runs = build_runs(anchors, turns, exclusions)
 
     RUNS_PATH.parent.mkdir(parents=True, exist_ok=True)
     with RUNS_PATH.open("w") as f:

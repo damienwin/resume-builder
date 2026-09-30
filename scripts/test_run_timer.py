@@ -47,6 +47,29 @@ class RunTimerTests(unittest.TestCase):
         self.assertEqual(result["steps"], {"a": 5.0, "b": 3.0})
         self.assertAlmostEqual(result["duration_s"], 8.0)
 
+    def test_repeated_label_accumulates_instead_of_overwriting(self):
+        # A second "repair" step (or any repeated mark label) must not
+        # silently clobber the first occurrence's duration — both intervals
+        # need to survive so they can be summed.
+        with mock.patch("time.time", side_effect=[0.0, 3.0, 8.0, 8.0]):
+            run_timer.start(self.skill)
+            run_timer.mark(self.skill, "repair")
+            run_timer.mark(self.skill, "repair")
+            result = run_timer.finish(self.skill)
+        self.assertEqual(result["steps"], {"repair": 3.0, "repair_2": 5.0})
+        self.assertAlmostEqual(sum(result["steps"].values()), result["duration_s"])
+
+    def test_three_repeats_of_same_label_all_preserved(self):
+        with mock.patch("time.time", side_effect=[0.0, 1.0, 2.0, 3.0, 3.0]):
+            run_timer.start(self.skill)
+            run_timer.mark(self.skill, "gate")
+            run_timer.mark(self.skill, "gate")
+            run_timer.mark(self.skill, "gate")
+            result = run_timer.finish(self.skill)
+        self.assertEqual(
+            result["steps"], {"gate": 1.0, "gate_2": 1.0, "gate_3": 1.0}
+        )
+
     def test_mark_with_no_active_timer_does_not_raise(self):
         run_timer.mark(self.skill, "orphan")  # no start() called
         self.assertFalse(self.path.exists())

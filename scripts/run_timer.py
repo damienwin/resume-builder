@@ -106,13 +106,25 @@ def finish(skill: str, scope: str = "") -> dict:
         # is the time since t0 (or the previous mark). A mark only records a
         # finish, so the FIRST mark's interval [t0, mark] is that mark's own
         # step duration, not a dangling unlabeled span.
-        steps = {}
+        #
+        # A label can repeat (a second "repair" step, a rerun of "gate").
+        # `steps[label] = ...` used to be a plain dict assignment, so a
+        # repeat silently overwrote the first occurrence's duration instead
+        # of accumulating — undercounting any step that runs more than once
+        # in a single skill run. A repeat is now suffixed "_2", "_3", ... so
+        # every interval is kept and summable, and single-occurrence labels
+        # are unaffected (still just "label").
+        steps: dict[str, float] = {}
+        label_counts: dict[str, int] = {}
         prev_t = t0
         for m in marks:
             label, t = m.get("label"), m.get("t")
             if not isinstance(t, (int, float)) or not label:
                 continue
-            steps[label] = round(t - prev_t, 2)
+            label_counts[label] = label_counts.get(label, 0) + 1
+            count = label_counts[label]
+            key = label if count == 1 else f"{label}_{count}"
+            steps[key] = round(t - prev_t, 2)
             prev_t = t
         if steps:
             result["steps"] = steps

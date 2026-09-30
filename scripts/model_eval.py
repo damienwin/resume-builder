@@ -471,7 +471,20 @@ class EvalStore:
                 imported += 1
         return imported
 
-    def aggregate(self, by_case: bool = False) -> List[Dict[str, Any]]:
+    def aggregate(self, by_case: bool = False,
+                  include_failed: bool = False) -> List[Dict[str, Any]]:
+        """Group and summarize model_eval_run events.
+
+        By default only "success" runs feed p50_latency_s, mean_cost_usd, and
+        every exact-token aggregate (mean_exact_*, mean_cache_hit_rate,
+        token_coverage) —
+        a "failed" or "partial" run's latency (often near-zero, an early
+        abort) or missing tokens would otherwise silently drag p50_latency_s
+        and mean_cost_usd toward numbers that don't describe a completed
+        run. Pass include_failed=True (CLI: --include-failed) to blend them
+        back in when that's actually what's being measured (e.g. auditing
+        failure rate itself).
+        """
         events = self.load_events()
         excluded_run_ids = {event["run_id"] for event in events
                             if event.get("event") == "model_eval_exclusion"}
@@ -515,7 +528,18 @@ class EvalStore:
 
         rows = []
         for key, runs in sorted(groups.items()):
-            exact_runs = [run for run in runs if run.get("token_source") == "exact"]
+            # Latency, cost, and exact-token aggregates default to
+            # success-only: a failed/partial
+            # run's latency is often an early-abort artifact (near-zero or
+            # missing), and blending it in silently drags p50_latency_s and
+            # mean_cost_usd toward numbers that don't describe a completed
+            # run. "runs"/"success_rate" below still count every run in the
+            # group — only latency/cost/exact-token aggregates are filtered;
+            # ATS, human, judge, and audit aggregates still use every run.
+            status_filtered = runs if include_failed else [
+                run for run in runs if run.get("status") == "success"
+            ]
+            exact_runs = [run for run in status_filtered if run.get("token_source") == "exact"]
             exact_tokens = [run["total_tokens"] for run in exact_runs
                             if run.get("total_tokens") is not None]
             exact_inputs = [run["total_input_tokens"] for run in exact_runs
@@ -565,7 +589,7 @@ class EvalStore:
                 )
                 for run in quality_reviewed
             )
-            costs = [run["cost_usd"] for run in runs if run.get("cost_usd") is not None]
+            costs = [run["cost_usd"] for run in status_filtered if run.get("cost_usd") is not None]
             successful = sum(run.get("status") == "success" for run in runs)
             rows.append({
                 "cohort": key[0],
@@ -577,7 +601,8 @@ class EvalStore:
                 "runs": len(runs),
                 "success_rate": round(successful / len(runs), 4),
                 "p50_latency_s": percentile(
-                    [run["latency_s"] for run in runs if run.get("latency_s") is not None], 0.5
+                    [run["latency_s"] for run in status_filtered
+                     if run.get("latency_s") is not None], 0.5
                 ),
                 "mean_exact_tokens": round(statistics.mean(exact_tokens), 1) if exact_tokens else None,
                 "mean_exact_input": round(statistics.mean(exact_inputs), 1) if exact_inputs else None,
@@ -720,6 +745,9 @@ def build_parser() -> argparse.ArgumentParser:
     report = subparsers.add_parser("report", help="summarize accumulated model evals")
     report.add_argument("--json", action="store_true")
     report.add_argument("--by-case", action="store_true")
+    report.add_argument("--include-failed", action="store_true",
+                        help="blend failed/partial runs into latency, cost, and "
+                             "exact-token aggregates instead of the success-only default")
     return parser
 
 
@@ -839,7 +867,7 @@ def main() -> None:
             args.run_id, args.latency_s, args.source, args.reason
         ), indent=2))
     elif args.command == "report":
-        rows = store.aggregate(args.by_case)
+        rows = store.aggregate(args.by_case, args.include_failed)
         if args.json:
             print(json.dumps(rows, indent=2))
         else:
