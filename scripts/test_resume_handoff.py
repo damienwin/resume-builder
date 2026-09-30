@@ -232,6 +232,82 @@ class ResumeHandoffTests(unittest.TestCase):
         result = verify_manifest(self.manifest_path, jd_file=self.jd)
         self.assertFalse(result["valid"])
 
+    # -- rotating widgets: counters and trailing related-jobs blocks -----------
+
+    BODY = ("Software Engineer. Build distributed systems in Go and Python. "
+            "Requirements: Bachelor's degree in Computer Science; 2+ years of "
+            "experience with Kubernetes. Salary $150,000. Location: Austin. ") * 6
+
+    def test_result_counter_phrases_stripped_in_place(self):
+        a = ("Jobs search results 3,356 jobs matched " + self.BODY +
+             "Showing 1 to 20 of 3356 rows 1&#8209;20 of 3356 navigate_next Go")
+        b = a.replace("3,356", "3,327").replace("3356", "3327")
+        self.assertNotEqual(a, b)
+        self.assertEqual(normalized_sha256_text(a), normalized_sha256_text(b))
+        self.assertIn("kubernetes", normalize_jd_text(a))
+
+    def test_counter_whole_lines_stripped(self):
+        self.assertEqual(normalize_jd_text("1,204 results\n42 jobs found\nBuild Go."),
+                         "build go.")
+
+    def test_counter_words_inside_requirement_text_kept(self):
+        text = ("Requirements: publish 3 results in peer-reviewed venues. "
+                "Showing 2 of your projects in a portfolio is a plus. "
+                "You will triage 40 jobs found in the queue. Own 5 positions.\n"
+                "3 positions\n")
+        norm = normalize_jd_text(text)
+        for frag in ("3 results in peer-reviewed", "showing 2 of your projects",
+                     "40 jobs found in the queue", "own 5 positions", "3 positions"):
+            self.assertIn(frag, norm)
+
+    def test_counter_change_still_detected_when_not_a_counter_phrase(self):
+        a = "Showing 1 to 20 of 3356 rows\n" + self.BODY
+        b = a.replace("Kubernetes", "Terraform", 1)
+        self.assertNotEqual(normalized_sha256_text(a), normalized_sha256_text(b))
+
+    def test_trailing_related_jobs_block_stripped(self):
+        tail1 = ("Related Jobs Software Engineer, Creator San Mateo, CA View Job "
+                 "Software Engineer, Engine San Mateo, CA View Job")
+        tail2 = ("Related Jobs Software Engineer, Data San Mateo, CA View Job "
+                 "Software Engineer, UX San Mateo, CA View Job Research Engineer, ML View Job")
+        a = self.BODY + "Equal opportunity employer. " + tail1
+        b = self.BODY + "Equal opportunity employer. " + tail2
+        self.assertEqual(normalized_sha256_text(a), normalized_sha256_text(b))
+        self.assertIn("equal opportunity employer", normalize_jd_text(a))
+        self.assertNotIn("related jobs", normalize_jd_text(a))
+        # multi-line form: heading on its own line, list items one per line
+        c = self.BODY + "\nOpen positions\nFPGA Intern Chicago\nTrader Chicago\n"
+        d = self.BODY + "\nOpen positions\nAI Engineer New York\n"
+        self.assertEqual(normalized_sha256_text(c), normalized_sha256_text(d))
+
+    def test_related_jobs_words_inside_requirement_text_kept(self):
+        # Heading-like words, but in the back half of genuine prose.
+        text = (self.BODY + "Experience in related jobs or open positions in "
+                "fintech is a plus. You will mentor interns and own the roadmap. "
+                "Must be authorized to work in the US.")
+        norm = normalize_jd_text(text)
+        self.assertIn("related jobs or open positions", norm)
+        self.assertIn("authorized to work in the us", norm)
+        # Heading at a block start but followed by prose -> kept.
+        text2 = (self.BODY + "Other open roles. We hire in teams that ship weekly. "
+                 "Candidates must hold a PhD. Apply by Friday.")
+        self.assertIn("candidates must hold a phd", normalize_jd_text(text2))
+
+    def test_related_jobs_heading_in_front_half_kept(self):
+        text = "Related Jobs Go Rust View Job Apply now. " + self.BODY
+        self.assertIn("related jobs", normalize_jd_text(text))
+
+    def test_related_jobs_huge_tail_kept(self):
+        # Tail longer than 40% of the text is not treated as a widget.
+        text = "Intro line. Related Jobs " + "Role A View Job " * 50
+        self.assertIn("related jobs", normalize_jd_text(text))
+
+    def test_edit_before_widget_still_detected(self):
+        tail = "Related Jobs Software Engineer, Creator San Mateo, CA View Job "
+        a = self.BODY + tail
+        b = self.BODY.replace("Bachelor's", "Master's", 1) + tail
+        self.assertNotEqual(normalized_sha256_text(a), normalized_sha256_text(b))
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

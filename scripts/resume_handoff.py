@@ -18,7 +18,8 @@ JD freshness check: the manifest records both the JD file's resolved path
 time — not just the raw-byte hash. `verify --jd-file <path>` re-hashes that
 path's current content the same normalized way (whitespace collapsed,
 case-folded, tracking query params and "posted N days ago" phrases removed
-in place, standalone view/applicant counter lines dropped) and compares. If
+in place, standalone view/applicant counter lines dropped, search-result
+counters removed, a trailing related-jobs/open-positions block truncated) and compares. If
 normalization leaves nothing, or under half the raw text, verify fails closed
 rather than trusting a hash of a near-empty string. Raw-byte hashing was rejected on purpose: a fresh page
 fetch is rarely byte-stable, so it would force a false mismatch on almost
@@ -68,6 +69,40 @@ _VOLATILE_WHOLE_LINES = [
     re.compile(r'^\d[\d,]*\+?\s+(views?|applicants?)$', re.I),
 ]
 
+# Rotating-widget counters ("3,356 jobs matched", "Showing 1 to 20 of 3356
+# rows", "1-20 of 3356 navigate_next"). Matched IN PLACE (like _POSTED_AGO) so a
+# single-line fetch keeps the rest of its text. Each pattern needs the full
+# counter phrase, not a bare number or a bare noun, so requirement prose such
+# as "publish 3 results" or "showing 2 of your projects" never matches.
+_N = r'\d[\d,]*\+?'
+_DASH = r'(?:&#8209;|[-\u2010-\u2015])'
+_WIDGET_NOUN = r'(?:rows?|results?|jobs?|positions?|listings?|openings?|roles?)'
+_COUNTER_PHRASES = [
+    re.compile(r'\b' + _N + r'\s+(?:jobs?|results?|positions?|roles?|openings?)\s+matched\b', re.I),
+    re.compile(r'\b(?:showing\s+)?\d[\d,]*\s*(?:to|' + _DASH + r')\s*\d[\d,]*\s+of\s+\d[\d,]*\s+'
+               + _WIDGET_NOUN + r'\b', re.I),
+    re.compile(r'\b\d[\d,]*\s*' + _DASH + r'\s*\d[\d,]*\s+of\s+\d[\d,]*(?=\s+(?:navigate_next|next\b))', re.I),
+]
+_COUNTER_WHOLE_LINES = [
+    re.compile(r'^' + _N + r'\s+(?:results?|jobs?|positions?|roles?|openings?)\s+(?:found|matched)$', re.I),
+    re.compile(r'^' + _N + r'\s+results?$', re.I),
+]
+
+# Trailing "related/similar/other jobs" or "open positions" widget. Truncated
+# only when ALL hold: the heading starts a block (line start or after a
+# sentence end), it sits in the back half of the text, what follows is at most
+# 40% of the text, and the first 200 chars after it contain no sentence end
+# (list-like, not prose). Anything else keeps the text.
+_WIDGET_HEADING = re.compile(
+    r'(?:(?<=\n)|(?<=[.!?]\s)|^)[ \t]*'
+    r'(?:(?:related|similar|other|more|recommended|suggested)\s+(?:jobs|roles|positions|openings|opportunities)'
+    r'|(?:other\s+)?open\s+(?:positions|roles)|jobs\s+you\s+(?:may|might)\s+(?:also\s+)?like)'
+    r'\s*:?(?=\s)', re.I)
+_SENTENCE_END = re.compile(r'[a-z0-9)\]][.!?](?:\s+[A-Z]|\s*$)')
+_WIDGET_MIN_POS = 0.5
+_WIDGET_MAX_TAIL = 0.4
+_WIDGET_PROBE = 200
+
 # Fail-closed threshold: if normalization removed more than half of the raw
 # text's non-whitespace characters, the normalized form no longer represents
 # the JD, so its hash can't vouch for freshness. Legit noise (a posted-ago
@@ -85,23 +120,43 @@ def _clean_query_separators(line: str) -> str:
     return re.sub(r'[?&](?=[\s)\].,;]|$)', '', line)
 
 
+def _strip_trailing_widget(text: str) -> str:
+    """Drop a trailing related-jobs/open-positions block; else return as is."""
+    total = len(text)
+    for m in _WIDGET_HEADING.finditer(text):
+        if m.start() < _WIDGET_MIN_POS * total:
+            continue
+        tail = text[m.end():]
+        if len(tail) > _WIDGET_MAX_TAIL * total:
+            continue
+        probe = re.sub(r"\s+", " ", tail[:_WIDGET_PROBE])
+        if _SENTENCE_END.search(probe):
+            continue
+        return text[:m.start()]
+    return text
+
+
 def normalize_jd_text(text: str) -> str:
     """Whitespace-insensitive, case-insensitive, re-fetch-noise-stripped form.
 
     Lenient only toward specific noise (spacing, case, "posted N days ago",
-    tracking query params, standalone view/applicant counters). Every other
+    tracking query params, standalone view/applicant counters, search-result
+    counters, a trailing related-jobs/open-positions block). Every other
     word must still match, so a genuine requirements change is caught.
     """
     normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    normalized = _strip_trailing_widget(normalized)
     lines = []
     for raw_line in normalized.split("\n"):
         line = _TRACKING_PARAM.sub(r'\1', raw_line)
         line = _clean_query_separators(line)
         line = _POSTED_AGO.sub(' ', line)
+        for pat in _COUNTER_PHRASES:
+            line = pat.sub(' ', line)
         line = re.sub(r"\s+", " ", line).strip()
         if not line:
             continue
-        if any(p.match(line) for p in _VOLATILE_WHOLE_LINES):
+        if any(p.match(line) for p in _VOLATILE_WHOLE_LINES + _COUNTER_WHOLE_LINES):
             continue
         lines.append(line.casefold())
     return "\n".join(lines)
