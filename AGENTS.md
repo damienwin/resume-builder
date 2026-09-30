@@ -108,5 +108,12 @@ rewrite `knowledge/rules.md`, and install `tectonic` plus `poppler` (for
 `pdftotext`). `knowledge/current_offer.md` is optional — only
 `/job-scan --compare-offer` and `/start` use it.
 
+Optional: a Typesafe `TYPESAFE_API_KEY` enables Jev in job-scan's degree
+check (`scripts/check_eligibility.py`). Copy `.env.example` to `.env` (which
+is gitignored) and set the key there. Without the key, everything still
+works: postings the regex can't classify fall back to the skill's in-context
+judgment. Set `RESUME_BUILDER_JEV=off` to disable Jev even when a key is
+present. Only public JD text is ever sent to Jev.
+
 After setup, point the user at **`/start`**. Agents without
 `AskUserQuestion` should drive `tailor-resume` / `apply` directly instead.

@@ -78,7 +78,12 @@ is off the table:
 > block a fork — companies routinely list an experience bar that a strong
 > new-grad candidate applies past anyway, and the user has said to always
 > attempt these rather than self-select out. Note it as a stretch in the
-> fork's summary, then tailor and apply regardless.
+> fork's summary, then tailor and apply regardless. Structurally enforced,
+> not just documented: `scripts/check_eligibility.py`'s local comparison
+> function has no code path that can return `"ineligible"` from
+> years-of-experience data — see `scripts/test_check_eligibility.py`'s
+> years-never-drops sweep — so Step 2.6's degree gate can never be extended
+> into a years gate by accident.
 
 If a requirement is genuinely unmet, or the user declines to answer: stop
 immediately, do not tailor or open a browser tab, and report the specific

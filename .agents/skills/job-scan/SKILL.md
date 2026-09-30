@@ -309,29 +309,58 @@ hides the requirement — a row listed as "Software Engineer Early Career,
 Multiple Teams" turned out to be "Software Engineer, Infrastructure, PhD,
 Early Career," with a PhD as a minimum qualification.
 
-**Resolve the user's own degree level first**, from `knowledge/education.md`
-(the degree in progress, and its expected completion date). Everything below
-is a comparison against *that* — never a blanket rule. A PhD posting is a
-hard mismatch for a BS candidate and a perfectly good match for a PhD
-candidate, so a repo used by a grad student must keep exactly the rows a
-bachelor's candidate drops. If `education.md` is missing or its degree level
-is ambiguous, keep every hatted posting and note the flag as unverified
-rather than assuming bachelor's.
+This check runs through `scripts/check_eligibility.py`, once for **all**
+hatted entries in a single call (one Jev-gate notice per run, not one per
+posting), against Step 2.5's cached JD text:
 
-Then read the cached JD text (`<scratchpad>/jds/<name>.txt` per the Step 2.5
-manifest) for the minimum-qualifications section:
+```bash
+python3 scripts/check_eligibility.py <scratchpad>/jds/<name1>.txt <scratchpad>/jds/<name2>.txt ... --json
+```
 
-- **Required degree is above the user's** (it appears under minimum/required
-  qualifications, or the title/cohort names the degree) → drop the posting as
-  a hard eligibility mismatch and count it for Step 5. Do not surface it.
-- **Required degree is at or below the user's** → keep it. If the posting is
-  aimed at a cohort the user is in, that's a positive signal worth a Note.
-- **Advanced degree only preferred**, or a lower degree is also accepted →
-  keep the posting and say so in its Note column (e.g. "PhD preferred, BS
-  accepted").
-- **JD unreachable** (JS-rendered page, 403, empty body) → keep the posting,
-  and mark the Note "advanced-degree flag unverified." Never let a failed
-  fetch silently disqualify a role.
+It prints `{"jev_enabled": bool, "results": [{"jd_path", "extraction",
+"path", "status", "reason"}, ...]}`. Map each `status` straight to the table:
+
+- **`ineligible`** → drop the posting as a hard eligibility mismatch and
+  count it for Step 5. Do not surface it. This is the only dropping status,
+  and it fires only when the degree requirement is confidently extracted as
+  `required` **and** strictly above the level in `knowledge/education.md`
+  (see `scripts/test_check_eligibility.py`).
+- **`eligible`** → keep it. Use `reason` for the Note column when it adds
+  a signal.
+- **`unverified`** → keep the posting and put `reason` in the Note column.
+  Covers an empty/unreachable JD, a failed or low-confidence extraction
+  (including a Jev outage), `education.md` missing or ambiguous, a
+  preferred-only degree, and a JD whose text never mentions a degree (for
+  example a fetch that returned only nav chrome). Years of experience is
+  only ever a stretch note. It can never produce `ineligible`, by
+  construction, per `references/acting-on-results.md` §4a.
+- **`needs_judgment`** → Jev is off and the regex couldn't classify this
+  JD. Judge it yourself with the rules below. This is the pre-script
+  behavior, so nothing changes for users without Jev.
+- **Non-zero exit** → the script failed as a whole. Treat every hatted
+  posting as `unverified`: keep it, with the Note "advanced-degree flag
+  unverified".
+
+**Jev is optional.** It runs only when `TYPESAFE_API_KEY` is set (in the
+environment or the repo-root `.env`). `RESUME_BUILDER_JEV=off` or
+`--no-jev` turns it off. The script always tries a free regex pre-filter
+first. That filter handles the common phrasings ("Bachelor's degree in...",
+"PhD required", "BS/MS/PhD in..."). When a posting lists several degrees as
+alternatives, the lowest one counts. Only JDs the regex defers go to Jev
+(`POST /v1/systemone`), and the request carries the public JD text only.
+`knowledge/` never leaves the local comparison step.
+
+**Prose judgment for `needs_judgment` rows only.** Resolve the user's degree
+level from `knowledge/education.md` (the degree in progress). If it's
+missing or ambiguous, keep the row and mark it unverified. Then read the
+cached JD's minimum-qualifications section:
+
+- **Required degree above the user's** → drop and count it for Step 5.
+- **Required degree at or below the user's** → keep.
+- **Advanced degree only preferred**, or a lower degree also accepted → keep,
+  and say so in the Note (e.g. "PhD preferred, BS accepted").
+- **JD unreachable** → keep, with the Note "advanced-degree flag
+  unverified". Never let a failed fetch disqualify a role.
 
 Degree level is the only thing this step tests. A graduation-year or
 start-date cohort mismatch is checked later, per posting, in
@@ -339,7 +368,7 @@ start-date cohort mismatch is checked later, per posting, in
 
 Never surface a hatted posting unchecked and leave the disqualification for
 the user to catch. Google Careers and many ATS pages are JS-rendered and
-return only nav chrome through `WebFetch`; `fetch_urls.py`'s browser
+return only nav chrome through `WebFetch`. `fetch_urls.py`'s browser
 User-Agent plus its `--strip-tags` pass usually recovers the qualifications
 text where plain `WebFetch` fails.
 
