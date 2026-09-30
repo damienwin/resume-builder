@@ -211,11 +211,12 @@ def reading_order_issues(raw_text: str) -> list[str]:
     Each heading is matched only on a line consisting of the heading alone
     (surrounding whitespace allowed), so the same word inside an earlier
     bullet ("...side Projects in Rust") can't cause a false fail or hide a
-    real reorder.
+    real reorder. Matching is case-insensitive: older templates set
+    headings in capitals ("EDUCATION").
     """
     positions: list[tuple[int, str]] = []
     for name in _SECTION_ORDER:
-        m = re.search(r"(?m)^[ \t]*" + re.escape(name) + r"[ \t]*$", raw_text)
+        m = re.search(r"(?mi)^[ \t]*" + re.escape(name) + r"[ \t]*$", raw_text)
         positions.append((m.start() if m else -1, name))
     missing = [name for idx, name in positions if idx == -1]
     if missing:

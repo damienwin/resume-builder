@@ -354,6 +354,15 @@ class ReadingOrderUnitTests(unittest.TestCase):
             "Education\nExperience\nProjects\nTechnical Skills\n")
         self.assertEqual(issues, [])
 
+    def test_uppercase_headings_in_template_order_pass(self):
+        self.assertEqual(vrp.reading_order_issues(
+            "EDUCATION\nEXPERIENCE\nPROJECTS\nTECHNICAL SKILLS\n"), [])
+
+    def test_uppercase_headings_out_of_order_still_fail(self):
+        issues = vrp.reading_order_issues(
+            "EDUCATION\nTECHNICAL SKILLS\nEXPERIENCE\nPROJECTS\n")
+        self.assertIn("out of order", issues[0])
+
 
 class LinkVisibilityUnitTests(unittest.TestCase):
     def test_no_links_declared_is_not_an_issue(self):
