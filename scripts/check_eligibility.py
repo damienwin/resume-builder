@@ -444,6 +444,30 @@ def degree_is_evidenced(degree: str, jd_text: str) -> bool:
     return True if pattern is None else bool(pattern.search(normalize_text(jd_text)))
 
 
+_EQUIVALENCE_QUALIFIER_RE = re.compile(
+    r"\bor\s+(?:an?\s+)?(?:equivalent|comparable)\b"
+    r"|\bequivalent\s+(?:\w+\s+){0,2}?(?:experience|education|training|qualifications?)\b"
+    r"|\bin\s+lieu\s+of\b"
+    r"|\bor\s+(?:related|relevant)\s+(?:practical\s+|work\s+|industry\s+)?experience\b",
+    re.IGNORECASE,
+)
+_EQUIVALENCE_WINDOW = 200
+
+
+def has_equivalence_qualifier(jd_text: str) -> bool:
+    """True when an "or equivalent experience"-style qualifier sits near any
+    degree token. A degree that is waivable by experience is not a hard
+    requirement, so the Jev path must not drop on it. Deliberately
+    over-triggers (keeping a posting is always the safe direction)."""
+    text = normalize_text(jd_text)
+    for pattern in _DEGREE_EVIDENCE.values():
+        for m in pattern.finditer(text):
+            window = text[max(0, m.start() - 60): m.end() + _EQUIVALENCE_WINDOW]
+            if _EQUIVALENCE_QUALIFIER_RE.search(window):
+                return True
+    return False
+
+
 def _answer_probability(answer: Dict[str, Any]) -> Optional[float]:
     probs = answer.get("probabilities")
     choice = answer.get("choice")
@@ -495,6 +519,9 @@ def call_jev(jd_text: str, api_key: Optional[str] = None, timeout: int = JEV_TIM
 
     if not degree_is_evidenced(degree, jd_text):
         return ExtractionResult(extraction_ok=False, path="jev_uncorroborated")
+
+    if has_equivalence_qualifier(jd_text):
+        return ExtractionResult(extraction_ok=False, path="jev_equivalence")
 
     probs = [_answer_probability(degree_ans), _answer_probability(degree_req_ans)]
     can_drop = all(p is not None and p >= JEV_MIN_PROBABILITY for p in probs)

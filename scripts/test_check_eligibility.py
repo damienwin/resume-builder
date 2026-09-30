@@ -451,6 +451,43 @@ class CorroborationSynonymTests(TmpKnowledge):
         self.assertIn(compare_eligibility(r, self.edu, self.exp)[0], ("eligible", "unverified"))
 
 
+class EquivalenceQualifierTests(TmpKnowledge):
+    WAIVABLE = [
+        "Minimum qualifications: PhD in Computer Science or a related field, or equivalent practical experience.",
+        "Master's degree required, or equivalent work experience.",
+        "A doctorate in lieu of which we accept comparable industry experience.",
+        "PhD or equivalent experience is required.",
+        "Bachelor's degree or related practical experience.",
+    ]
+
+    def test_waivable_degree_phrasings_are_detected(self):
+        for jd in self.WAIVABLE:
+            self.assertTrue(ce.has_equivalence_qualifier(jd), jd)
+
+    def test_plain_hard_requirements_are_not_flagged(self):
+        for jd in ("PhD in Computer Science is required.",
+                   "Master's degree required. 3 years of Python. Equivalent benefits offered to all staff.",
+                   "We use equivalent tooling across teams."):
+            self.assertFalse(ce.has_equivalence_qualifier(jd), jd)
+
+    def test_jev_required_phd_with_equivalence_is_kept_not_dropped(self):
+        jd = self.WAIVABLE[0]
+        with mock.patch("check_eligibility.urllib.request.urlopen",
+                        return_value=fake_urlopen_response(jev_payload(degree="PhD", prob=0.95))):
+            r = call_jev(jd, api_key="fake-key")
+        self.assertFalse(r.extraction_ok)
+        self.assertEqual(r.path, "jev_equivalence")
+        self.assertEqual(compare_eligibility(r, self.edu, self.exp)[0], "unverified")
+
+    def test_same_jev_answer_without_equivalence_still_drops(self):
+        jd = "Minimum qualifications: PhD in Computer Science."
+        with mock.patch("check_eligibility.urllib.request.urlopen",
+                        return_value=fake_urlopen_response(jev_payload(degree="PhD", prob=0.95))):
+            r = call_jev(jd, api_key="fake-key")
+        self.assertTrue(r.extraction_ok)
+        self.assertEqual(compare_eligibility(r, self.edu, self.exp)[0], "ineligible")
+
+
 # ---------------------------------------------------------------------------
 # 6. Feature gate
 # ---------------------------------------------------------------------------

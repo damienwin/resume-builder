@@ -359,6 +359,9 @@ cached JD's minimum-qualifications section:
 - **Required degree at or below the user's** → keep.
 - **Advanced degree only preferred**, or a lower degree also accepted → keep,
   and say so in the Note (e.g. "PhD preferred, BS accepted").
+- **Degree waivable by experience** ("PhD … or equivalent practical
+  experience", "in lieu of") → keep, Note "degree or equivalent experience".
+  An experience-waivable degree is not a hard requirement.
 - **JD unreachable** → keep, with the Note "advanced-degree flag
   unverified". Never let a failed fetch disqualify a role.
 
