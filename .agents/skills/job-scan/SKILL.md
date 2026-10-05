@@ -394,22 +394,35 @@ Only if the user opted in.
   estimate a base figure for a posting whose salary is already in the JSON —
   but its JD is still fetched for stated bonus/equity/RSU language to append
   (Step 2.5).
-- **For every remaining posting** (no `salary` field, and not already headed
-  for a drop on every other signal), scan its cached JD text from Step 2.5
-  for a stated salary/range — Simplify's table never carries comp, and
-  speedyapply's "Other" rows don't either. This step is mandatory, not
-  something to skip for speed: a stated JD figure is the single biggest
-  driver of tier placement, and defaulting straight to "Worth a skim" without
-  checking misclassifies postings that actually beat the bar. These postings
-  must already be in Step 2.5's fetch union — if one was missed there
-  (compare-offer turned on after that step ran, for instance), fetch it now
-  the same way rather than falling straight to levels.fyi. A stated figure in
-  the JD or table is authoritative and takes precedence over any estimate —
-  never relabel it as one.
-- **Only after** the JD check comes up empty for a posting, fall back to a
-  levels.fyi lookup (`https://www.levels.fyi/companies/<company>/salaries/software-engineer`
-  or search) for that company + role, and label the figure `~$X (est.)`.
-  levels.fyi is the last resort, never the first move.
+- **Extract JD comp with the script, once.** After Step 2.5's fetch, run
+  every cached JD `.txt` (all of them, including postings that already have
+  a `salary` — Step 4 still needs their bonus/equity text) through a single
+  call:
+
+  ```bash
+  python3 scripts/extract_comp.py <scratchpad>/jds/<name1>.txt <scratchpad>/jds/<name2>.txt ... --json
+  ```
+
+  It prints `{"results": [{"jd_path", "base": {"low","high","period","raw"}|null,
+  "bonus", "equity", "comp_text"|null, "status": "stated"|"none", "multi"}, ...]}`.
+  Use `comp_text` verbatim for the TC column (it already carries any stated
+  bonus/equity). `status: "stated"` is authoritative and never relabeled as an
+  estimate. `multi: true` means the JD lists several ranges (locations/levels)
+  — keep the TC but check which range fits the posting's location. This is
+  mandatory, not skippable for speed: a stated JD figure is the biggest
+  driver of tier placement. A posting whose JD wasn't in Step 2.5's fetch
+  union (compare-offer turned on late) is fetched now the same way and added
+  to the same call. A non-zero exit or an unreadable/empty JD counts as
+  `status: "none"` — never as below the bar.
+- **The entry's own `salary` still wins** for the base figure; append only
+  the script's bonus/equity text to it.
+- **levels.fyi last, in one parallel batch.** Only postings with
+  `status: "none"` **and** no `salary` field go here. Build one urls-file of
+  `https://www.levels.fyi/companies/<company>/salaries/software-engineer`
+  lines and fetch them together (`fetch_urls.py --concurrency 8 --strip-tags`,
+  same as Step 2.5) — never one serial WebFetch/search per posting. Label the
+  result `~$X (est.)`. A page that yields no usable figure leaves the posting
+  at `—`; never invent one.
 
 Classify each posting:
 
