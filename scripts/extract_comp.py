@@ -98,14 +98,18 @@ EXCLUDE_AFTER = re.compile(
     re.IGNORECASE,
 )
 
+# Application-form answer options ("Desired Rate per hour ($) * $50-$70 ...").
+DESIRED_RE = re.compile(r"desired\s+(?:hourly\s+)?(?:rate|salary|compensation|pay)", re.IGNORECASE)
+
 BONUS_RE = re.compile(r"\bbonus(?:es)?\b", re.IGNORECASE)
-BONUS_EXCLUDE = re.compile(r"(?:referral|employee\s+referral|no)\s+$", re.IGNORECASE)
+BONUS_EXCLUDE = re.compile(r"(?:referral|employee\s+referral|no|added|extra|bonus)\s+$", re.IGNORECASE)
+BONUS_AFTER_EXCLUDE = re.compile(r"^\s*(?:points?|if\b)", re.IGNORECASE)
 NEGATED_BONUS = re.compile(r"\bno\s+(?:\w+\s+){0,2}bonus", re.IGNORECASE)
 
 EQUITY_STRONG = re.compile(
     r"\b(?:RSUs?|restricted\s+stock(?:\s+units?)?|stock\s+(?:options?|grants?|awards?|units?|compensation)|"
     r"equity\s+(?:grants?|awards?|compensation|packages?|incentives?|participation|refresh)|"
-    r"(?:employee|company)\s+stock|stock\s+purchase)\b",
+    r"(?:employee|company)\s+stock(?!\s+purchase))\b",
     re.IGNORECASE,
 )
 EQUITY_WEAK = re.compile(r"\b(?:equity|stock)\b", re.IGNORECASE)
@@ -115,9 +119,9 @@ EQUITY_COMP_CONTEXT = re.compile(
     re.IGNORECASE,
 )
 EQUITY_EXCLUDE = re.compile(
-    r"(?:diversity|inclusion|inclusive|belonging|private|home|brand|shareholder|"
+    r"(?:internal|gender|racial|social|diversity|inclusion|inclusive|belonging|private|home|brand|shareholder|"
     r"fixed[\s-]income|capital|derivatives?|cash)[\s,&/-]*(?:and\s+|&\s*)?$|"
-    r"^\s*(?:and\s+|&\s*)?(?:inclusion|inclusive|belonging|diversity|markets?|trading|"
+    r"^\s*(?:and\s+|&\s*)?(?:inclusion|inclusive|belonging|diversity|purchase|markets?|trading|"
     r"derivatives?|research|index|options|volatility|capital|financing|funds?|"
     r"analysts?|desk|sales|portfolio|investments?|quant|strateg\w*|"
     r"exchange|exchanges|prices?|pricing|market)\b|"
@@ -185,7 +189,7 @@ def _candidates(text: str):
             continue
         low, high = (a, b) if a <= b else (b, a)
         before, after = _window(text, start, end)
-        if EXCLUDE_BEFORE.search(before) or EXCLUDE_AFTER.match(after):
+        if DESIRED_RE.search(before) or EXCLUDE_BEFORE.search(before) or EXCLUDE_AFTER.match(after):
             continue
         # Plain numbers like "$5" / "$25" need a period marker; checked below.
         period = _period(after, before)
@@ -237,6 +241,8 @@ def has_bonus(text: str) -> bool:
             continue
         if NEGATED_BONUS.search(text[max(0, m.start() - 30):m.end()]):
             continue
+        if BONUS_AFTER_EXCLUDE.match(text[m.end():m.end() + 12]):
+            continue
         return True
     return False
 
@@ -265,6 +271,7 @@ def _fmt_raw(base: dict) -> str:
         return f"{_fmt_k(base['low'])}-{_fmt_k(base['high'])}" + ("/hr" if base["period"] == "hr" else "")
     raw = re.sub(r"\s+", " ", base["raw"])
     raw = re.sub(r"\s*(?:USD)\s*$", "", raw, flags=re.I).strip()
+    raw = re.sub(r"\s+and\s+", " - ", raw, flags=re.I)
     return raw + ("/hr" if base["period"] == "hr" else "")
 
 

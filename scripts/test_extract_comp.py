@@ -229,6 +229,26 @@ class CliTests(unittest.TestCase):
         r = extract_comp(text)
         self.assertEqual((r["base"]["low"], r["base"]["high"]), (135000, 230000))
 
+    def test_internal_equity_is_not_stock(self):
+        r = extract_comp("Pay depends on skills, experience, internal equity, and market data.")
+        self.assertFalse(r["equity"])
+
+    def test_added_bonus_phrase_is_not_comp(self):
+        r = extract_comp("Added bonus if you have MLOps exposure. Bonus points for Go.")
+        self.assertFalse(r["bonus"])
+
+    def test_espp_alone_is_not_equity(self):
+        r = extract_comp("Benefits: 401(k) matching, employee stock purchase program (ESPP).")
+        self.assertFalse(r["equity"])
+
+    def test_form_option_rates_are_not_pay(self):
+        r = extract_comp("Desired Rate per hour ($) * -- No answer -- $50-$70 $70-$80 $100-$120")
+        self.assertIsNone(r["base"])
+
+    def test_between_and_range_renders_as_dash(self):
+        r = extract_comp("The salary range is between $175,000 and $225,000 per year.")
+        self.assertEqual(r["comp_text"], "$175,000 - $225,000")
+
 
 if __name__ == "__main__":
     unittest.main()

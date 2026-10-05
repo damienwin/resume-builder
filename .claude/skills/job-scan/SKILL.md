@@ -416,13 +416,22 @@ Only if the user opted in.
   `status: "none"` — never as below the bar.
 - **The entry's own `salary` still wins** for the base figure; append only
   the script's bonus/equity text to it.
-- **levels.fyi last, in one parallel batch.** Only postings with
-  `status: "none"` **and** no `salary` field go here. Build one urls-file of
-  `https://www.levels.fyi/companies/<company>/salaries/software-engineer`
-  lines and fetch them together (`fetch_urls.py --concurrency 8 --strip-tags`,
-  same as Step 2.5) — never one serial WebFetch/search per posting. Label the
-  result `~$X (est.)`. A page that yields no usable figure leaves the posting
-  at `—`; never invent one.
+- **levels.fyi last, by script.** Only postings with `status: "none"` **and**
+  no `salary` field go here. Write their unique company names, one per line,
+  to a file and run **one** call:
+
+  ```bash
+  python3 scripts/levels_fyi_est.py --companies-file <scratchpad>/companies.txt --json
+  ```
+
+  It fetches every company's levels.fyi page in one parallel batch, retries
+  404s with alternate slug guesses, and parses the page's meta description. It
+  prints `{"results": {"<company>": {"status": "estimated"|"none", "est_text":
+  "~$133K-$189K (est.)"|null, "country", ...}}}`. Use `est_text` verbatim for
+  the TC column. Figures stay in the currency levels.fyi shows and non-US pages
+  carry their country (`~CA$113K-CA$164K (est., Canada)`). `status: "none"`
+  (no page, no figure, or a failed fetch) leaves the posting at `—` — never
+  invent a figure, and never read levels.fyi pages by hand.
 
 Classify each posting:
 
