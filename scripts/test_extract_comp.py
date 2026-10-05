@@ -217,6 +217,18 @@ class CliTests(unittest.TestCase):
         self.assertTrue(r["base"]["multi"])
         self.assertEqual(r["comp_text"], "$125k-$200k")
 
+    def test_html_residue_between_figures(self):
+        text = '<p>Compensation Range:</p><p><bdi>$85,600</bdi> - <bdi>$128,400</bdi> <bdi>USD</bdi></p>'
+        r = extract_comp(text)
+        self.assertEqual(r["base"]["low"], 85600)
+        self.assertEqual(r["base"]["high"], 128400)
+        self.assertEqual(r["status"], "stated")
+
+    def test_html_entities_and_unicode_escapes(self):
+        text = "Pay range:&nbsp;\\u003cb\\u003e$135,000 - $230,000/per year\\u003c/b\\u003e"
+        r = extract_comp(text)
+        self.assertEqual((r["base"]["low"], r["base"]["high"]), (135000, 230000))
+
 
 if __name__ == "__main__":
     unittest.main()

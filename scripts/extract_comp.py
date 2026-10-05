@@ -42,6 +42,7 @@ status "none".
 from __future__ import annotations
 
 import argparse
+import html
 import json
 import re
 import sys
@@ -267,7 +268,23 @@ def _fmt_raw(base: dict) -> str:
     return raw + ("/hr" if base["period"] == "hr" else "")
 
 
+_TAG_RE = re.compile(r"<[^>]{0,300}>")
+_UNI_ESC_RE = re.compile(r"\\u([0-9a-fA-F]{4})")
+
+
+def _clean(text: str) -> str:
+    """Strip leftover HTML (tags, entities, JSON \\uXXXX escapes) that
+    fetch_urls --strip-tags can leave behind, so "<bdi>$85,600</bdi> -
+    <bdi>$128,400</bdi>" reads as one range."""
+    if "<" not in text and "&" not in text and "\\u" not in text:
+        return text
+    text = _UNI_ESC_RE.sub(lambda m: chr(int(m.group(1), 16)), text)
+    text = html.unescape(_TAG_RE.sub(" ", text)).replace("\xa0", " ")
+    return re.sub(r"[ \t]+", " ", text)
+
+
 def extract_comp(text: str) -> dict:
+    text = _clean(text)
     base = extract_base(text)
     bonus = has_bonus(text)
     equity = has_equity(text)
