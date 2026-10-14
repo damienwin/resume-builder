@@ -42,6 +42,7 @@ status "none".
 from __future__ import annotations
 
 import argparse
+import hashlib
 import html
 import json
 import re
@@ -311,13 +312,41 @@ def extract_comp(text: str) -> dict:
     }
 
 
-def extract_file(path: str) -> dict:
+def _source_version() -> str:
+    """First 12 hex of sha256 of this script's own source, so any logic edit
+    invalidates cached entries automatically."""
+    try:
+        with open(__file__, "rb") as fh:
+            return hashlib.sha256(fh.read()).hexdigest()[:12]
+    except OSError:
+        return "0" * 12
+
+
+PARSER_VERSION = _source_version()
+
+
+def extract_file(path: str, cache: bool = False) -> dict:
     try:
         with open(path, encoding="utf-8", errors="replace") as fh:
             text = fh.read()
     except OSError:
         text = ""
+    key = None
+    if cache and text.strip():
+        try:
+            import scan_cache
+            key = scan_cache.content_hash(text)
+            hit = scan_cache.parsed_get("comp", key, key, PARSER_VERSION)
+            if hit is not None:
+                return {**hit, "jd_path": path}
+        except Exception:  # noqa: BLE001 - cache is best-effort
+            key = None
     result = extract_comp(text) if text.strip() else extract_comp("")
+    if key:
+        try:
+            scan_cache.parsed_put("comp", key, key, PARSER_VERSION, result)
+        except Exception:  # noqa: BLE001
+            pass
     return {"jd_path": path, **result}
 
 
@@ -325,8 +354,10 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("jd_files", nargs="+")
     ap.add_argument("--json", action="store_true", help="emit JSON (default)")
+    ap.add_argument("--cache", action="store_true",
+                    help="reuse/store results in the shared scan cache (keyed by JD content hash)")
     args = ap.parse_args(argv)
-    results = [extract_file(p) for p in args.jd_files]
+    results = [extract_file(p, cache=args.cache) for p in args.jd_files]
     json.dump({"results": results}, sys.stdout, indent=2)
     sys.stdout.write("\n")
     return 0

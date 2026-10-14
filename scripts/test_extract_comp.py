@@ -8,8 +8,10 @@ import contextlib
 import io
 import json
 import os
+from pathlib import Path
 import tempfile
 import unittest
+from unittest import mock
 
 import extract_comp as ec
 from extract_comp import extract_comp
@@ -248,6 +250,87 @@ class CliTests(unittest.TestCase):
     def test_between_and_range_renders_as_dash(self):
         r = extract_comp("The salary range is between $175,000 and $225,000 per year.")
         self.assertEqual(r["comp_text"], "$175,000 - $225,000")
+
+
+class CacheTests(unittest.TestCase):
+    JD = "The base salary range is $120,000 - $150,000 per year."
+
+    def setUp(self):
+        self.td = tempfile.TemporaryDirectory()
+        self.addCleanup(self.td.cleanup)
+        patcher = mock.patch.dict(os.environ, {"RESUME_BUILDER_CACHE": os.path.join(self.td.name, "cache")})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.jd = os.path.join(self.td.name, "jd.txt")
+        self._write(self.JD)
+
+    def _write(self, text):
+        with open(self.jd, "w") as fh:
+            fh.write(text)
+
+    def test_hit_skips_extraction_and_restamps_path(self):
+        first = ec.extract_file(self.jd, cache=True)
+        other = os.path.join(self.td.name, "other.txt")
+        with open(other, "w") as fh:
+            fh.write(self.JD)
+        with mock.patch.object(ec, "extract_comp", side_effect=AssertionError("should hit")):
+            second = ec.extract_file(other, cache=True)
+        self.assertEqual(second["jd_path"], other)
+        self.assertEqual({k: v for k, v in second.items() if k != "jd_path"},
+                         {k: v for k, v in first.items() if k != "jd_path"})
+
+    def test_miss_on_content_change(self):
+        ec.extract_file(self.jd, cache=True)
+        self._write("The base salary range is $200,000 - $250,000 per year.")
+        r = ec.extract_file(self.jd, cache=True)
+        self.assertEqual(r["base"]["low"], 200000)
+
+    def test_miss_on_version_bump(self):
+        ec.extract_file(self.jd, cache=True)
+        with mock.patch.object(ec, "PARSER_VERSION", "999"), \
+                mock.patch.object(ec, "extract_comp", wraps=ec.extract_comp) as m:
+            ec.extract_file(self.jd, cache=True)
+        self.assertEqual(m.call_count, 1)
+
+    def test_parser_version_is_source_hash(self):
+        self.assertRegex(ec.PARSER_VERSION, r"^[0-9a-f]{12}$")
+        self.assertEqual(ec.PARSER_VERSION, ec._source_version())
+
+    def test_parsed_get_misses_on_different_version(self):
+        import scan_cache
+        ec.extract_file(self.jd, cache=True)
+        with open(self.jd) as fh:
+            key = scan_cache.content_hash(fh.read())
+        self.assertIsNotNone(scan_cache.parsed_get("comp", key, key, ec.PARSER_VERSION))
+        self.assertIsNone(scan_cache.parsed_get("comp", key, key, "deadbeef0000"))
+
+    def test_corrupt_record_yields_fresh_result(self):
+        fresh = ec.extract_file(self.jd, cache=True)
+        recs = list(Path(self.td.name, "cache", "parsed", "comp").glob("*.json"))
+        self.assertEqual(len(recs), 1)
+        for garbage in ("{not json", "[]", '{"jd_hash": 1}', "\x00\xff"):
+            recs[0].write_text(garbage)
+            self.assertEqual(ec.extract_file(self.jd, cache=True), fresh)
+
+    def test_no_cache_by_default(self):
+        ec.extract_file(self.jd)
+        self.assertFalse(os.path.exists(os.path.join(self.td.name, "cache")))
+        ec.extract_file(self.jd, cache=True)
+        with mock.patch.object(ec, "extract_comp", wraps=ec.extract_comp) as m:
+            ec.extract_file(self.jd)
+        self.assertEqual(m.call_count, 1)
+
+    def test_cli_cache_flag_output_shape_unchanged(self):
+        def run(extra):
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                ec.main([self.jd] + extra)
+            return json.loads(buf.getvalue())
+        plain = run([])
+        run(["--cache"])
+        self.assertEqual(run(["--cache"]), plain)
+
+
 
 
 if __name__ == "__main__":

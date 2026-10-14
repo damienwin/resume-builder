@@ -1,5 +1,9 @@
 """Tests for levels_fyi_est: slug guesses, description parsing, 404 fallback."""
+import os
+import tempfile
+import time
 import unittest
+from unittest import mock
 
 import levels_fyi_est as lf
 
@@ -92,6 +96,53 @@ class LookupTests(unittest.TestCase):
             raise OSError("down")
         res = lf.lookup(["Acme"], fetcher=boom)
         self.assertIsNone(res["Acme"]["est_text"])
+
+
+class CacheTests(unittest.TestCase):
+    GOOD = page("Total compensation in United States at Acme ranges from $100K to $150K per year.")
+
+    def setUp(self):
+        self.td = tempfile.TemporaryDirectory()
+        self.addCleanup(self.td.cleanup)
+        p = mock.patch.dict(os.environ, {"RESUME_BUILDER_CACHE": self.td.name})
+        p.start()
+        self.addCleanup(p.stop)
+        self.calls = []
+
+    def fetcher(self, body, status=200):
+        def f(u, t, ua):
+            self.calls.append(u)
+            return status, "text/html", body.encode()
+        return f
+
+    def test_hit_skips_fetch(self):
+        r1 = lf.lookup(["Acme"], fetcher=self.fetcher(self.GOOD), use_cache=True)
+        self.assertEqual(r1["Acme"]["status"], "estimated")
+        n = len(self.calls)
+        r2 = lf.lookup(["Acme"], fetcher=self.fetcher(self.GOOD), use_cache=True)
+        self.assertEqual(len(self.calls), n)
+        self.assertEqual(r2["Acme"], r1["Acme"])
+
+    def test_no_cache_by_default(self):
+        lf.lookup(["Acme"], fetcher=self.fetcher(self.GOOD))
+        lf.lookup(["Acme"], fetcher=self.fetcher(self.GOOD))
+        self.assertEqual(len(self.calls), 2)
+        self.assertEqual(os.listdir(self.td.name), [])
+
+    def test_failures_and_empty_not_cached(self):
+        lf.lookup(["Nowhere"], fetcher=self.fetcher("", 404), use_cache=True)
+        lf.lookup(["Blank"], fetcher=self.fetcher(page("")), use_cache=True)
+        self.assertEqual(os.listdir(self.td.name), [])
+
+    def test_expired_entry_refetched(self):
+        import scan_cache
+        scan_cache.levels_put("Acme", {"status": "estimated", "est_text": "~$1 (est.)"},
+                              now=time.time() - 31 * 86400)
+        r = lf.lookup(["Acme"], fetcher=self.fetcher(self.GOOD), use_cache=True)
+        self.assertEqual(len(self.calls), 1)
+        self.assertNotEqual(r["Acme"]["est_text"], "~$1 (est.)")
+
+
 
 
 if __name__ == "__main__":

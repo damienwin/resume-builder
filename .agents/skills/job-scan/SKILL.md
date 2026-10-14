@@ -284,8 +284,19 @@ same run:
 
 ```bash
 python3 scripts/fetch_urls.py --urls-file <scratchpad>/jd_urls.txt \
-  --out-dir <scratchpad>/jds --concurrency 8 --strip-tags > <scratchpad>/jd_fetch.json
+  --out-dir <scratchpad>/jds --concurrency 8 --strip-tags --cache > <scratchpad>/jd_fetch.json
 ```
+
+`--cache` reads/writes the shared on-disk cache (`scripts/scan_cache.py`,
+default `~/.cache/resume-builder/`, 24h max age for JDs): a fresh hit skips
+the network and the manifest marks it `"cached": true`, with top-level
+`cache_hits`/`cache_misses`. A cold cache just means normal speed. The
+scheduled `scripts/prewarm_scan.py` fills this cache ahead of time with
+these same steps; it is read-only with respect to the scan — it never
+writes `job_scan_state.json` or advances `last_scan_at`, and never tailors
+or applies. Only board files (Step 1) are always fetched live. `apply`'s
+handoff verification still fetches the posting live; don't route it through
+the cache.
 
 One line per `apply_url` in the union, no name column needed (the manifest
 maps each URL back to its saved `.txt`). Steps 2.5 and 3 both read from
@@ -314,7 +325,7 @@ hatted entries in a single call (one Jev-gate notice per run, not one per
 posting), against Step 2.5's cached JD text:
 
 ```bash
-python3 scripts/check_eligibility.py <scratchpad>/jds/<name1>.txt <scratchpad>/jds/<name2>.txt ... --json
+python3 scripts/check_eligibility.py <scratchpad>/jds/<name1>.txt <scratchpad>/jds/<name2>.txt ... --cache --json
 ```
 
 It prints `{"jev_enabled": bool, "results": [{"jd_path", "extraction",
@@ -400,7 +411,7 @@ Only if the user opted in.
   call:
 
   ```bash
-  python3 scripts/extract_comp.py <scratchpad>/jds/<name1>.txt <scratchpad>/jds/<name2>.txt ... --json
+  python3 scripts/extract_comp.py <scratchpad>/jds/<name1>.txt <scratchpad>/jds/<name2>.txt ... --cache --json
   ```
 
   It prints `{"results": [{"jd_path", "base": {"low","high","period","raw"}|null,
@@ -421,7 +432,7 @@ Only if the user opted in.
   to a file and run **one** call:
 
   ```bash
-  python3 scripts/levels_fyi_est.py --companies-file <scratchpad>/companies.txt --json
+  python3 scripts/levels_fyi_est.py --companies-file <scratchpad>/companies.txt --cache --json
   ```
 
   It fetches every company's levels.fyi page in one parallel batch, retries
