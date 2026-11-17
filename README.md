@@ -1,44 +1,10 @@
 # resume-builder
 
+![How the pipeline fits together: scripts filter and verify, models only rank and write](docs/pipeline-flow.png)
+
 Find postings, generate a tailored one-page LaTeX resume for any job
 description, and (optionally) autofill the application — all from a rich
 personal knowledge base plus a set of Claude Code skills.
-
-## How the pipeline fits together
-
-Scripts filter and verify; models only rank and write. Purple = model step,
-white = script. Every stage ends in a fail-closed script gate, and a person
-does the final submit.
-
-```mermaid
-flowchart TB
-  subgraph S1["1 · Setup (once)"]
-    A["/start: fill knowledge/ from resume, repos, typing"]
-  end
-  subgraph S2["2 · Scan"]
-    B["Fetch 3 boards"] --> C["Parse + filter: AI/ML only"]
-    C --> D["Fetch JDs"] --> E["Degree check: BS, new grad"]
-    E --> F["Compare offer: pay over $50k"]:::model --> G["Top N you pick"]
-  end
-  subgraph S3["3 · Tailor (one subagent per posting)"]
-    H["Fan out subagents"] --> I["Read knowledge/ facts"]:::model
-    I --> J["Select"]:::model --> K{"Selection gate"}
-    K -- fail --> J
-    K -- pass --> L["Write bullets"]:::model --> M{"Bullet gate"}
-    M -- fail --> L
-    M -- pass --> N["Render .tex from template"]:::model --> O["Compile + verify PDF"]
-    O -- fails --> P["Repair + recompile"]:::model --> O
-    O -- pass --> Q["Review (auto mode, always)"]:::model --> R["Finalize: archive + log + hash"]
-  end
-  subgraph S4["4 · Apply"]
-    T{"Handoff check: hash match"} -- "no match" --> H
-    T -- match --> U["Fill form"]:::model --> V(["You submit"])
-  end
-  A --> B
-  G --> H
-  R --> T
-  classDef model fill:#ede9fe,stroke:#7c3aed,color:#1e1b4b
-```
 
 ## Setting it up for yourself
 

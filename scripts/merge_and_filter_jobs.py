@@ -25,7 +25,8 @@ entries from *different* `source` values).
 Output: JSON to stdout —
     {"entries": [...], "scanned": N, "scanned_simplify": N,
      "scanned_speedyapply": N, "scanned_speedyapply_ai": N, "closed_excluded": N,
-     "cross_source_dropped": N, "already_applied_dropped": N}
+     "cross_source_dropped": N, "already_applied_dropped": N,
+     "excluded_companies_dropped": N}
 
 Entries keep every field the parsers emit. An entry whose company matches an
 archived resume older than --auto-drop-days but whose role reads as a
@@ -79,6 +80,39 @@ def canonical_url(url):
 def norm_company(name):
     """Normalize a company name for exact comparison (case, punctuation, spacing)."""
     return " ".join(re.findall(r"[a-z0-9]+", (name or "").lower()))
+
+
+def load_excluded_companies(path):
+    """Normalized company names from a one-per-line file ('#' starts a comment).
+
+    A missing file means no exclusions; it is the user's private list under the
+    gitignored knowledge/ directory.
+    """
+    names = []
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                name = norm_company(line.split("#", 1)[0])
+                if name:
+                    names.append(name)
+    except OSError:
+        pass
+    return names
+
+
+def filter_excluded_companies(entries, excluded):
+    """Drop entries whose company equals an excluded name or starts with it as
+    whole words ("IBM Research" matches "IBM"; "IBMX" does not).
+    """
+    if not excluded:
+        return entries, 0
+    kept = []
+    for e in entries:
+        company = norm_company(e.get("company"))
+        if any(company == x or company.startswith(x + " ") for x in excluded):
+            continue
+        kept.append(e)
+    return kept, len(entries) - len(kept)
 
 
 def role_tokens(role):
@@ -322,6 +356,11 @@ def main():
         default=str(Path(__file__).resolve().parent.parent / "knowledge" / "metrics.jsonl"),
         help="metrics.jsonl holding resume_tailor events (company + role)",
     )
+    ap.add_argument(
+        "--exclude-companies",
+        default=str(Path(__file__).resolve().parent.parent / "knowledge" / "excluded_companies.txt"),
+        help="one-company-per-line file of employers to drop from every scan",
+    )
     ap.add_argument("--applied-days", type=float, default=30)
     ap.add_argument("--auto-drop-days", type=float, default=3)
     args = ap.parse_args()
@@ -348,6 +387,9 @@ def main():
     if any_other_source:
         entries, cross_source_dropped = dedupe_cross_source(entries)
 
+    entries, excluded_companies_dropped = filter_excluded_companies(
+        entries, load_excluded_companies(args.exclude_companies)
+    )
     entries, already_applied_dropped = filter_already_applied(
         entries,
         archive_index(args.archive, args.metrics),
@@ -362,6 +404,7 @@ def main():
         "closed_excluded": closed_excluded,
         "cross_source_dropped": cross_source_dropped,
         "already_applied_dropped": already_applied_dropped,
+        "excluded_companies_dropped": excluded_companies_dropped,
     }
     if scanned_speedyapply is not None:
         result["scanned_speedyapply"] = scanned_speedyapply

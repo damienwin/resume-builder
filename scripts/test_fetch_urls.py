@@ -11,7 +11,8 @@ from pathlib import Path
 from unittest import mock
 
 import scan_cache
-from fetch_urls import fetch_all, output_name, parse_urls_file, strip_tags
+import fetch_urls
+from fetch_urls import fetch_all, output_name, parse_urls_file, strip_tags, workday_api_url
 
 
 class StripTagsTests(unittest.TestCase):
@@ -382,6 +383,33 @@ class EndToEndEquivalenceTests(unittest.TestCase):
                 b = extract_comp.extract_file(t2, cache=True)
             a.pop("jd_path"), b.pop("jd_path")
             self.assertEqual(a, b)
+
+
+class WorkdayTests(unittest.TestCase):
+    def test_api_url_rewrite(self):
+        self.assertEqual(
+            workday_api_url("https://nvidia.wd5.myworkdayjobs.com/NVIDIAExternalCareerSite/job/US-CA-Santa-Clara/SoC_JR1?utm_source=x"),
+            "https://nvidia.wd5.myworkdayjobs.com/wday/cxs/nvidia/NVIDIAExternalCareerSite/job/US-CA-Santa-Clara/SoC_JR1")
+
+    def test_api_url_strips_locale(self):
+        self.assertEqual(
+            workday_api_url("https://boeing.wd1.myworkdayjobs.com/en-US/external_careers/job/USA---San-Diego-CA/Dev_1"),
+            "https://boeing.wd1.myworkdayjobs.com/wday/cxs/boeing/external_careers/job/USA---San-Diego-CA/Dev_1")
+
+    def test_non_workday_and_non_job_paths(self):
+        self.assertIsNone(workday_api_url("https://boards.greenhouse.io/x/jobs/1"))
+        self.assertIsNone(workday_api_url("https://a.wd1.myworkdayjobs.com/site"))
+
+    def test_http_get_renders_json_as_html(self):
+        body = b'{"jobPostingInfo": {"title": "Dev", "location": "NYC", "jobDescription": "<p>Build things</p>"}}'
+        resp = mock.MagicMock()
+        resp.__enter__.return_value = resp
+        resp.status, resp.read.return_value = 200, body
+        with mock.patch("urllib.request.urlopen", return_value=resp) as uo:
+            status, ctype, out = fetch_urls._http_get("https://a.wd1.myworkdayjobs.com/s/job/L/T_1", 5, "ua")
+        self.assertIn("/wday/cxs/a/s/job/L/T_1", uo.call_args[0][0].full_url)
+        self.assertEqual((status, ctype), (200, "text/html"))
+        self.assertIn("Build things", strip_tags(out.decode()))
 
 
 if __name__ == "__main__":

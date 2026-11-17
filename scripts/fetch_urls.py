@@ -207,7 +207,43 @@ def _serve_from_cache(url, explicit_name, out_dir, strip_tags_flag, cache_dir, m
     return hit
 
 
+_WORKDAY_HOST = re.compile(r"^([a-z0-9-]+)\.wd\d+\.myworkdayjobs\.com$", re.I)
+_LOCALE = re.compile(r"^[a-z]{2}-[A-Z]{2}$")
+
+
+def workday_api_url(url: str) -> str | None:
+    """Workday posting pages are JS shells with no JD text; the same posting
+    is served as JSON at /wday/cxs/<tenant>/<site>/job/<path>. None if `url`
+    isn't a Workday posting URL."""
+    u = urlsplit(url)
+    m = _WORKDAY_HOST.match(u.netloc)
+    parts = [p for p in u.path.split("/") if p]
+    if parts and _LOCALE.match(parts[0]):
+        parts = parts[1:]
+    if not m or len(parts) < 3 or parts[1] != "job":
+        return None
+    return f"{u.scheme}://{u.netloc}/wday/cxs/{m.group(1)}/{parts[0]}/job/{'/'.join(parts[2:])}"
+
+
+def _workday_get(api_url: str, timeout: float, user_agent: str):
+    """Fetch the CXS JSON and render it as minimal HTML so strip_tags and the
+    JD cache treat it like any other page. Non-2xx statuses pass through."""
+    req = urllib.request.Request(api_url, headers={"User-Agent": user_agent, "Accept": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            status, raw = resp.status, resp.read()
+    except urllib.error.HTTPError as e:
+        return e.code, "", e.read()
+    info = (json.loads(raw).get("jobPostingInfo") or {})
+    html = (f"<html><body><h1>{info.get('title', '')}</h1><p>{info.get('location', '')}</p>"
+            f"{info.get('jobDescription', '')}</body></html>")
+    return status, "text/html", html.encode("utf-8")
+
+
 def _http_get(url: str, timeout: float, user_agent: str):
+    api = workday_api_url(url)
+    if api:
+        return _workday_get(api, timeout, user_agent)
     req = urllib.request.Request(url, headers={"User-Agent": user_agent})
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:

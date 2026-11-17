@@ -12,6 +12,7 @@ Usage:
     python3 scripts/build_metrics_dashboard.py
 """
 import json
+import re
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -202,8 +203,10 @@ def build_performance(runs):
         {
             "skill": skill,
             "runs": len(durations),
+            "avg_s": round(sum(durations) / len(durations), 1),
             "p50_s": round(_percentile(durations, 0.5), 1),
             "p95_s": round(_percentile(durations, 0.95), 1),
+            "p99_s": round(_quantile(sorted(durations), 0.99), 1),
         }
         for skill, durations in sorted(by_skill_latency.items(), key=lambda kv: -len(kv[1]))
     ]
@@ -219,8 +222,10 @@ def build_performance(runs):
         {
             "scan_type": scan_type,
             "runs": len(durations),
+            "avg_s": round(sum(durations) / len(durations), 1),
             "p50_s": round(_percentile(durations, 0.5), 1),
             "p95_s": round(_percentile(durations, 0.95), 1),
+            "p99_s": round(_quantile(sorted(durations), 0.99), 1),
         }
         for scan_type, durations in sorted(by_scan_type.items(), key=lambda kv: -len(kv[1]))
     ]
@@ -245,6 +250,97 @@ def build_performance(runs):
     }
 
 
+EVENT_BY_SKILL = {
+    "tailor-resume": "resume_tailor",
+    "job-scan": "job_scan",
+    "apply": "job_apply_e2e",
+}
+
+
+def canonical_step(name):
+    """Fold a timer mark's ad-hoc retry suffixes into one step name, so
+    repair2 / repair_3 count as repeats of "repair" and a second gate pass
+    (bullet_gate_2, bullet_gate_recheck) counts as that gate's repair loop."""
+    base = re.sub(r"_?\d+$", "", name)
+    repeated = base != name
+    if base == "compile":
+        return "compile_verify"
+    if base in ("bullet_gate_recheck", "bullet_gate_final"):
+        return "bullet_gate_repair"
+    if base in ("bullet_gate", "selection_gate") and repeated:
+        return base + "_repair"
+    return base
+
+
+def _quantile(values, q):
+    """Linear-interpolated quantile of an already-sorted list."""
+    pos = (len(values) - 1) * q
+    lo = int(pos)
+    hi = min(lo + 1, len(values) - 1)
+    return values[lo] + (values[hi] - values[lo]) * (pos - lo)
+
+
+def _dist(values):
+    if not values:
+        return None
+    values = sorted(values)
+    return {
+        "n": len(values),
+        "avg": round(sum(values) / len(values), 2),
+        "p50": round(_quantile(values, 0.5), 2),
+        "p90": round(_quantile(values, 0.9), 2),
+        "p95": round(_quantile(values, 0.95), 2),
+        "p99": round(_quantile(values, 0.99), 2),
+        "max": round(values[-1], 2),
+        "min": round(values[0], 2),
+    }
+
+
+def build_latency(runs):
+    """Per-step avg/percentile stats behind the flow diagram and the step
+    latency lanes. A step's time is the gap between two run_timer.py marks,
+    so it includes the model and any idle wait, not only the script."""
+    runs = [r for r in runs if not r.get("excluded")]
+    out = {"counts": {}}
+    for skill, event in EVENT_BY_SKILL.items():
+        skill_runs = [r for r in runs if r.get("skill") == skill]
+        stepped = [r for r in skill_runs if r.get("steps")]
+        samples = defaultdict(list)
+        runs_with = defaultdict(int)
+        for r in stepped:
+            seen = set()
+            for name, seconds in r["steps"].items():
+                if not isinstance(seconds, (int, float)):
+                    continue
+                step = canonical_step(name)
+                samples[step].append(seconds)
+                seen.add(step)
+            for step in seen:
+                runs_with[step] += 1
+        steps = {}
+        for step, values in samples.items():
+            stats = _dist(values)
+            stats["runs_with"] = runs_with[step]
+            stats["pct_runs"] = round(100 * runs_with[step] / len(stepped), 1)
+            stats["calls_when_hit"] = round(len(values) / runs_with[step], 2)
+            stats["calls_per_run"] = round(len(values) / len(stepped), 2)
+            steps[step] = stats
+        out[event] = {
+            "runs": len(skill_runs),
+            "runs_with_steps": len(stepped),
+            "duration_s": _dist([r["duration_s"] for r in skill_runs if r.get("duration_s") is not None]),
+            "duration_from_steps": _dist(
+                [r["duration_from_steps_s"] for r in stepped if r.get("duration_from_steps_s") is not None]
+            ),
+            "cost": _dist([r["cost_usd"] for r in skill_runs if r.get("cost_usd") is not None]),
+            "steps": steps,
+        }
+        out["counts"][event] = len(skill_runs)
+    scans = out["counts"].get("job_scan")
+    out["tailors_per_scan"] = round(out["counts"].get("resume_tailor", 0) / scans, 1) if scans else None
+    return out
+
+
 def main():
     records = load_records()
     runs = load_runs()
@@ -255,6 +351,7 @@ def main():
         "weekly": build_weekly_series(records),
         "recent": format_recent(records),
         "performance": build_performance(runs),
+        "latency": build_latency(runs),
     }
 
     if not TEMPLATE_PATH.exists():

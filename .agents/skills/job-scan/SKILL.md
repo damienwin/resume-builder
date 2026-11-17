@@ -214,7 +214,11 @@ python3 scripts/merge_and_filter_jobs.py --simplify <scratchpad>/s.json \
 already-applied filtering deterministically — don't re-derive either in
 prose. It emits `entries` plus `scanned`, `scanned_simplify`,
 `scanned_speedyapply`, `scanned_speedyapply_ai`, `closed_excluded`,
-`cross_source_dropped`, and `already_applied_dropped`. Read those numbers
+`cross_source_dropped`, `already_applied_dropped`, and
+`excluded_companies_dropped` (employers listed in the user's private
+`knowledge/excluded_companies.txt`, one per line, matched by name or whole-word
+prefix; the script reads it by default, so every scan and the prewarm honor
+it — add a line there to exclude a company for good). Read those numbers
 straight through to Steps 5–7.
 
 Each entry has `category`, `company`, `role`, `location`, `age_raw`,
@@ -448,6 +452,7 @@ Classify each posting:
 
 | Tier | When |
 |---|---|
+| **Prestigious** | Company is on the prestige list in `knowledge/rules.md` (when present) — wins over every other signal, never dropped |
 | **Better** | Stated or estimated comp beats the bar, a clearly higher level, or a company the user's notes call preferred/aspirational |
 | **Comparable** | No explicit beat but a real positive signal — `🔥 FAANG+`, an estimate near the bar, an obviously on-par tier |
 | **Worth a skim** | No clear signal either way; unfamiliar or unverifiable, nothing reading as a step down |
@@ -482,7 +487,7 @@ against). Everything else is identical.
   number understates the real offer. Never invent an equity value the JD
   doesn't state. Otherwise `—`.
 - **Posted** — the `age_raw` field (`1d`, `3d`).
-- **Tier** — Step 3's classification. Sort Better → Comparable → Worth a
+- **Tier** — Step 3's classification. Sort Prestigious → Better → Comparable → Worth a
   skim, newest first within each tier, then company name alphabetically so
   re-runs are stable.
 - **Note** — a short factual clause on **what the company actually does**
@@ -559,7 +564,7 @@ python3 scripts/log_metric.py job_scan '{
   "closed_excluded": <N>, "cross_source_dropped": <N or omit if 0>,
   "already_applied_dropped": <N>, "surfaced": <final count>,
   "compare_offer_used": <true|false>,
-  "better_count": <N or omit>, "comparable_count": <N or omit>,
+  "prestigious_count": <N or omit>, "better_count": <N or omit>, "comparable_count": <N or omit>,
   "worth_a_skim_count": <N or omit>, "dropped_worse_count": <N or omit>,
   "duration_s": <from run_timer finish>, "steps": <from run_timer finish>,
   "fetch_speedup": <N or omit>

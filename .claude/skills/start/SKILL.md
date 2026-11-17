@@ -1,6 +1,6 @@
 ---
 name: start
-description: The guided entry point for this repo — set up knowledge/ from an existing resume or the user's own repos if it isn't filled in yet, then scan Simplify's job boards and optionally tailor and/or apply to whatever looks worth pursuing. Use when the user opens this repo fresh and isn't sure where to begin, wants help filling in knowledge/, or explicitly asks to "start", "get going", "find and apply to jobs".
+description: The guided entry point for this repo — set up knowledge/ from an existing resume, the user's own repos, past Claude/Codex sessions or GitHub if it isn't filled in yet (probing for metrics and optionally adding metric tracking to a repo), then scan Simplify's job boards and optionally tailor and/or apply to whatever looks worth pursuing. Use when the user opens this repo fresh and isn't sure where to begin, wants help filling in knowledge/, or explicitly asks to "start", "get going", "find and apply to jobs".
 ---
 
 # start — Scan, then act
@@ -96,6 +96,43 @@ follow-along or an abandoned scratch repo is worse than nothing on a resume.
 Commit count is context for you, never a resume bullet. "Wrote 300 commits"
 says nothing a reader values.
 
+### Extra evidence: past agent sessions and GitHub
+
+Git history says when and how much; it doesn't say what was hard or what the
+work achieved. Two more local sources can fill that in. Offer them once, per
+the shortlist, with `AskUserQuestion` (multi-select: "Claude Code / Codex
+sessions", "GitHub account", "Neither"). Both are read-only and optional.
+
+**Past Claude Code and Codex sessions for a shortlisted repo** (the user's own
+conversations, on their own disk):
+
+```bash
+ls ~/.claude/projects/<encoded-repo-path>/*.jsonl 2>/dev/null | wc -l   # Claude Code
+ls ~/.codex/sessions 2>/dev/null | head                                  # Codex
+```
+
+Read each session's first user prompt and its closing assistant summary, not
+the whole transcript. They show what was attempted, what shipped, and what
+the user said it was for. Use them to write sharper questions in Step 1.4
+("your sessions show a caching rewrite in March — what did it speed up, and
+by how much?"). A session is a lead, never a source: nothing from it goes into
+`knowledge/` until the user confirms it, and a number an assistant stated in a
+session is not a measurement. Transcripts can hold secrets and unrelated
+private work, so never copy raw transcript text into a file.
+
+**GitHub, via `gh` if it's installed and authenticated** (skip silently if
+not):
+
+```bash
+gh repo list --limit 50 --json name,description,primaryLanguage,isFork,pushedAt,url,stargazerCount
+gh pr list --repo <owner/repo> --author @me --state merged --limit 20 --json title,mergedAt,url
+```
+
+Use it to find repos that were never cloned here, spot forks, and see merged
+PRs to other people's projects (open-source contributions are worth a
+bullet). Treat forks and repos with no commits of the user's own as noise.
+Everything still goes through the shortlist and the Step 1.4 questions.
+
 ## Step 1.4 — Check the ingested detail is strong enough
 
 Run this after **either** ingestion path, and also whenever the user asks to
@@ -137,6 +174,26 @@ Never invent, estimate, or round up a metric the user did not state, and
 never convert a vague memory into a specific figure. An unquantified true
 bullet beats a quantified invented one, and the latter is the kind of thing
 that falls apart in an interview.
+
+## Step 1.4a — Offer to start tracking metrics (optional)
+
+Only when Step 1.4 left `TODO` gaps for a project the user still maintains
+and the number could be measured going forward (latency, error rate, usage,
+build or test time, cost). Ask once per run with `AskUserQuestion`:
+"Want me to add lightweight metric tracking to <repo>?" with options "Yes,
+show me the plan first", "Not now". Never ask about repos that are archived,
+belong to someone else, or have nothing measurable.
+
+If they say yes, propose the smallest thing that works, as a plan, before
+touching anything: one append-only event log (a JSONL file plus a tiny logging
+helper, the same shape as this repo's `scripts/log_metric.py`) and the one or
+two call sites that emit the events, on a new branch in *their* repo so it's a
+reviewable diff they can drop. No new dependencies, no network calls, no
+services, and nothing committed or pushed without their say-so.
+
+Say plainly that tracking only measures from now on. It cannot produce a
+number for past work, so the `TODO` stays until real data exists. Record
+where the log lives in that file's `TODO` line so a later run can read it.
 
 ## Step 1.5 — One-time star nudge
 
@@ -207,6 +264,10 @@ know what's still thin. Don't re-ask in the same run.
 - Never tailor or apply from placeholder `knowledge.example/` content.
 - Never invent a metric, date, scale figure, or repo link during ingestion.
   Ask, or write a `TODO`.
+- Session transcripts and GitHub data are leads, not facts: read-only, never
+  copied raw into `knowledge/`, and never a source for a number.
+- Never modify, commit to, or push another repo (including metric tracking)
+  without an explicit yes for that repo.
 - Ingestion always drafts for confirmation and never writes over a
   `knowledge/` file the user already filled in without showing what changes.
 - Inherits every hard rule from `job-scan`, `tailor-resume`, and `apply` —
