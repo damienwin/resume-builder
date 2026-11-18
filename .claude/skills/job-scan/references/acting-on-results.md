@@ -16,12 +16,21 @@ Ask with `AskUserQuestion` (single-select) before doing anything else:
 ## 2. Pick postings and an action
 
 `AskUserQuestion` (multi-select) for which surfaced postings to act on,
-listed as `Company — Role`. Then one single-select action applying to all
-postings picked this round:
+listed as `Company — Role`.
 
-- **Tailor + apply** — the full `apply` skill per posting.
-- **Tailor only** — the `tailor-resume` skill per posting, no autofill.
-- **Skip everything** — do nothing further.
+**Tailor + apply is the default action.** Read `Default action:` under "Job
+scan defaults" in `knowledge/rules.md`:
+
+- `tailor + apply`, or no setting → every picked posting gets the full
+  `apply` skill. Don't ask a separate action question; put "Picked postings
+  are tailored and applied to, stopping at final review — say 'tailor only'
+  to skip the autofill" in the picker question's text so the user can
+  override for this round.
+- `tailor only` → the `tailor-resume` skill per posting, no autofill, same
+  override in reverse.
+
+The posting picker itself is never skipped: acting always needs the user's
+selection.
 
 ## 3. Resolve shared state once, before dispatching
 
@@ -37,8 +46,10 @@ otherwise parallel forks each stop and ask the user the same question.
   ```bash
   ls -d ~/.claude/plugins/cache/neonwatty-plugins/job-apply/*/scripts/job-apply-store.py
   ```
-  If it's missing, tell the user to install it and downgrade those postings to
-  "tailor only" for this run rather than dispatching forks that will fail.
+  If it's missing, run `start/SKILL.md` Step 1.7 (offer to install it,
+  with the user's yes) before dispatching. If they decline, downgrade those
+  postings to "tailor only" for this run rather than dispatching forks that
+  will fail.
 
 ## 4. Dispatch one fork per posting, all in a single batch
 

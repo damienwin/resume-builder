@@ -6,6 +6,26 @@ Find postings, generate a tailored one-page LaTeX resume for any job
 description, and (optionally) autofill the application — all from a rich
 personal knowledge base plus a set of Claude Code skills.
 
+**Quickest start:** clone it, open the folder in Claude Code (or Codex), and
+say "start". The agent runs `/start`, which always goes through the same
+setup in this order before scanning:
+
+1. **Connect your sources**: your resume file, repos on this machine, your
+   GitHub, and your past Claude Code / Codex sessions. Pick any.
+2. **Draft `knowledge/`** from them, showing each file before writing it.
+3. **Ask for everything still missing**: contact details, degree and
+   graduation date, skills, and the numbers behind thin bullets. Nothing is
+   guessed; anything you skip stays blank.
+4. **Settings**: board and categories, companies to block, an offer to
+   compare against, where to save PDFs, and optional keys for HackerRank ATS
+   scoring and smarter degree checks.
+5. **Autofill**: installs the job-apply plugin with your OK and syncs your
+   profile into it.
+6. **Scan, then tailor + apply** to the postings you pick. Applications stop
+   at final review; you click Submit.
+
+Change the settings later with `/start settings`.
+
 ## The flow at a glance
 
 ```
@@ -13,7 +33,7 @@ personal knowledge base plus a set of Claude Code skills.
 2. Fill        /start interviews you, or edit knowledge/ by hand
 3. Scan        /scan             new postings since your last scan
 4. Read        one table: Company | Role | TC | Location | Posted | Tier | Note
-5. Act         pick rows -> tailor only, or tailor + autofill (never submits)
+5. Act         pick rows -> tailor + autofill by default (never submits)
 ```
 
 Steps 2, 3 and 5 run as slash commands in Claude Code. Scripts do the
@@ -38,20 +58,22 @@ cp -r knowledge.example knowledge
 The richer this is, the better every resume gets. Pick whichever is easiest:
 
 - **Let `/start` do it.** On a fresh clone, `/start` notices placeholder
-  files and offers to fill them from:
+  files and asks which of these to connect (any combination):
   - **your existing resume** (PDF, .docx, .tex, .md): it splits it into
     profile, education, skills and one file per role or project, then asks
     about the gaps a resume hides (dates, repo links, the numbers behind a
     bullet);
   - **your repos on this machine**: it reads git history and READMEs to
     draft project files, and you pick which repos are worth a resume line;
-  - **past Claude Code / Codex sessions and your GitHub** (optional,
-    read-only): used only as leads for questions like "your sessions show a
-    caching rewrite in March, what did it speed up?". Nothing goes on the
-    resume until you confirm it.
+  - **your GitHub** (via `gh`, read-only): repos you never cloned here and
+    merged PRs to other projects;
+  - **past Claude Code / Codex sessions** (read-only): used only as leads
+    for questions like "your sessions show a caching rewrite in March, what
+    did it speed up?". Nothing goes on the resume until you confirm it.
 
-  It then checks each entry has a concrete metric or scale, asks for any that
-  are missing, and never invents one.
+  Then it always asks for whatever is still missing: required contact and
+  education fields first, then a concrete metric or scale for any entry
+  that reads thin. It never invents one.
 - **Write it by hand.** Each template in `knowledge.example/` shows the
   format (YAML frontmatter, free prose, seed bullets):
 
@@ -123,8 +145,9 @@ new postings".
 
 ### 5. Act on it
 
-After the table, the scan asks which postings to act on and whether to
-**tailor only** or **tailor + apply**. Each pick gets its own subagent, all
+After the table, the scan asks which postings to act on. Picked postings are
+**tailored and applied to** by default; say "tailor only" for a round, or set
+`Default action: tailor only` in `rules.md`. Each pick gets its own subagent, all
 started at once. Each one first checks hard blockers against the JD (graduation
 year / start date, required degree, visa / citizenship / clearance) and skips
 with a reason if you can't take the job, then tailors a one-page PDF, archives
@@ -133,9 +156,11 @@ review for you to submit. Say "just browsing" to skip this step.
 
 ## Tuning what the scan shows
 
+`/start` asks for the main ones during setup; `/start settings` asks again.
+
 | What | Where | Effect |
 |---|---|---|
-| Board, categories, recency, offer comparison | "Job scan defaults" in `knowledge/rules.md` | `/scan` uses these silently. `/job-scan` asks for anything missing, then offers to save your answers here |
+| Board, categories, recency, offer comparison, default action | "Job scan defaults" in `knowledge/rules.md` | `/scan` uses these silently. `/job-scan` asks for anything missing, then offers to save your answers here |
 | Categories | `--swe --pm --dsa --quant` (default set), `--hw` (opt-in) | Simplify's own categories. `--startup` is accepted but filters nothing |
 | Recency | `/scan N`, `--days N`, `--since-last-scan` | Since-last-scan reads `knowledge/job_scan_state.json`, which every scan updates |
 | Companies you never want to see | `knowledge/excluded_companies.txt`, one per line | Matched by name or whole-word prefix; applies to every scan and the prewarm |
@@ -146,6 +171,7 @@ review for you to submit. Say "just browsing" to skip this step.
 | Years of experience | nothing to set | Never blocks a posting; noted as a stretch |
 | Offer comparison bar | `knowledge/current_offer.md`, or a "Comparison bar" figure in `rules.md` | The bar for Better / Comparable. A flat figure keeps your employer's name out of output |
 | Prestige list | a company list in `rules.md` | Those companies rank Prestigious and are never dropped |
+| ATS scoring (optional) | `ANTHROPIC_API_KEY` in `.env` | Enables `/ats-score`, which grades a PDF with HackerRank's open-source ATS via Claude Haiku (a few cents per PDF) |
 | Faster scans | `python3 scripts/install_prewarm_schedule.py install` (`--print` to dry-run) | macOS launchd job at 07:00 and 12:00 that prefetches JDs and comp pages into `~/.cache/resume-builder/` (override with `RESUME_BUILDER_CACHE`). Never advances scan state, tailors or applies. `uninstall` removes it |
 
 **Using Codex (or another agent) instead of Claude Code:** the repo ships an
@@ -268,8 +294,8 @@ HackerRank open-sourced the ATS it uses to triage intern applications
 Run `/ats-score [pdf-path | --all]` to score a built resume (or the whole
 archived corpus under `~/Desktop/Tailored Resumes/`) against its public
 rubric. First run clones the tool into `tools/hiring-agent/` and sets it up
-to use Claude Haiku (needs `ANTHROPIC_API_KEY` in your shell environment or
-`tools/hiring-agent/.env`). The scorer is known to be non-deterministic —
+to use Claude Haiku (needs `ANTHROPIC_API_KEY` in this repo's `.env`, which
+`/start` settings walks you through, or in your shell environment). The scorer is known to be non-deterministic —
 treat the output as directional signal (and a checklist of concrete,
 fixable deductions like missing project links), never a target score.
 
@@ -354,7 +380,7 @@ mismatches against `knowledge/profile.md` / `knowledge/education.md` — a
 stated years-of-experience minimum never blocks a fork on its own; a strong
 new-grad candidate applies past it regardless.
 
-## Applying with the autofiller (optional)
+## Applying with the autofiller
 
 Web-form filling is handled by the third-party
 [job-apply plugin](https://github.com/neonwatty/job-apply-plugin) (MIT), which
@@ -363,7 +389,7 @@ extension — no Playwright or API key needed. It supports LinkedIn Easy Apply,
 Greenhouse, Ashby, Lever, Rippling, and Workday, and **never submits**: it
 always stops at final review and leaves the Submit click to you.
 
-Setup (once):
+On by default: `/start` offers to install it during setup. To do it by hand:
 
 ```bash
 claude plugin marketplace add neonwatty/job-apply-plugin

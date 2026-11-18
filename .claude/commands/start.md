@@ -1,9 +1,11 @@
 ---
-description: Guided entry point — scan Simplify's job boards, then optionally tailor and/or apply to what looks worth pursuing
-argument-hint: (no arguments — everything is asked interactively)
+description: Guided entry point — connect your sources, fill knowledge/, set your settings and autofill, then scan and tailor + apply
+argument-hint: [settings]
 ---
 
-Run the **start** skill (`.claude/skills/start/SKILL.md`). It runs the
-`job-scan` skill's interactive checklist first, then offers to tailor and/or
-apply to whatever the user selects from the results. Follow that skill's
-steps exactly — never skip its confirmation prompts.
+Run the **start** skill (`.claude/skills/start/SKILL.md`). On a fresh clone
+it connects sources, fills `knowledge/` and asks for anything missing, sets
+up settings and the autofiller, then runs the `job-scan` skill and tailors +
+applies to whatever the user picks. If `$ARGUMENTS` is `settings`, run only
+its Steps 1.6 and 1.7. Follow that skill's steps exactly — never skip its
+confirmation prompts.

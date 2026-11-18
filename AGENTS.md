@@ -3,6 +3,15 @@
 Generates a tailored one-page LaTeX resume for a job description from the
 personal knowledge base under `knowledge/`.
 
+**First run / no specific task:** if the user says anything like "start",
+"begin", "set me up", "do your thing", or just hands you this repo, run the
+`start` skill. Don't improvise a setup or ask what they want first: it walks
+a fixed sequence (connect resume / local repos / GitHub / past Claude and
+Codex sessions → draft `knowledge/` → ask for every missing field and thin
+metric → settings: scan defaults, blocked companies, offer comparison,
+archive folder, optional ATS-scoring and Jev keys → autofill setup → scan →
+tailor + apply to what the user picks).
+
 Each skill below is the single source of truth for its own workflow and
 carries its own rules — read the skill when you run it rather than working
 from this file's summary. The skills are plain markdown and not
@@ -14,7 +23,7 @@ URL-fetch capability; everything else is standard shell and file tools.
 | `tailor-resume` | `/tailor <url\|file>` | The core task: JD → verified one-page PDF |
 | `job-scan` | `/job-scan` | Scan Simplify + speedyapply boards, filtered; can fan out to tailor/apply |
 | `apply` | `/apply <url>` | Tailors for that posting first, then autofills the form |
-| `start` | `/start` | Guided entry point: scan → triage → tailor/apply |
+| `start` | `/start [settings]` | First-run entry point: connect sources → fill `knowledge/` → settings → autofill → scan → tailor + apply |
 | `ats-score` | `/ats-score [pdf]` | Diagnostic score against HackerRank's open-source ATS |
 | `app-profile-sync` | `/app-profile-sync` | Push `knowledge/` facts into the job-apply plugin's store |
 
@@ -102,18 +111,23 @@ Never overwrite prior measurements when models, prompts, or skills change.
 
 ## Setup for a new user
 
-`knowledge/` won't exist on a fresh clone. Per "Setting it up for yourself"
-in `README.md`: `cp -r knowledge.example knowledge`, fill it in, delete or
-rewrite `knowledge/rules.md`, and install `tectonic` plus `poppler` (for
-`pdftotext`). `knowledge/current_offer.md` is optional — only
-`/job-scan --compare-offer` and `/start` use it.
+`knowledge/` won't exist on a fresh clone. Install `tectonic` plus
+`poppler` (for `pdftotext`), then run the `start` skill: it copies
+`knowledge.example/`, fills it from the user's sources, asks for whatever is
+missing, and writes the settings (`rules.md` scan defaults and archive,
+`excluded_companies.txt`, optional `current_offer.md`). Autofill (the
+job-apply plugin) is on by default: `start` offers to install it, and picked
+postings are tailored and applied to unless `rules.md` says
+`Default action: tailor only`.
 
-Optional: a Typesafe `TYPESAFE_API_KEY` enables Jev in job-scan's degree
-check (`scripts/check_eligibility.py`). Copy `.env.example` to `.env` (which
-is gitignored) and set the key there. Without the key, everything still
+Optional keys live in the gitignored repo-root `.env` (copy `.env.example`),
+written by the user, never pasted into chat: `ANTHROPIC_API_KEY` enables
+`ats-score`, and a Typesafe `TYPESAFE_API_KEY` enables Jev in job-scan's degree
+check (`scripts/check_eligibility.py`). Without the Jev key, everything still
 works: postings the regex can't classify fall back to the skill's in-context
 judgment. Set `RESUME_BUILDER_JEV=off` to disable Jev even when a key is
 present. Only public JD text is ever sent to Jev.
 
-After setup, point the user at **`/start`**. Agents without
-`AskUserQuestion` should drive `tailor-resume` / `apply` directly instead.
+Agents without `AskUserQuestion` run `start`'s same steps by asking in plain
+text; agents without a plugin system skip autofill and drive
+`tailor-resume` directly.

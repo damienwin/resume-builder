@@ -35,11 +35,14 @@ providers.json (cheap, no local model download, no Ollama dependency). Set in
 DEFAULT_MODEL=claude-haiku-4-5
 ```
 
-`ANTHROPIC_API_KEY` must be set in the shell environment or in
+`ANTHROPIC_API_KEY` must be set in the shell environment, in this repo's
+root `.env` (where `/start` settings tells users to put it), or in
 `tools/hiring-agent/.env` for that model to work (per `config.py`'s
 `provider_for()`). **Never grep, cat, or otherwise display the key's value.**
-If it's unset, tell the user to add it to `tools/hiring-agent/.env` or export
-it, then stop and wait — do not fall back to a different provider without
+When it's only in the root `.env`, load it into the scorer's environment
+silently on each run (see Step 1). If it's unset everywhere, tell the user to
+add `ANTHROPIC_API_KEY=...` to the repo's `.env` themselves, then stop and
+wait — do not fall back to a different provider without
 asking, since Ollama/Gemini require their own separate setup.
 
 If `providers.json` no longer has an `anthropic` entry when you check it,
@@ -58,6 +61,7 @@ python3 scripts/run_timer.py start ats-score
 ```bash
 cd tools/hiring-agent
 source .venv/bin/activate
+[ -z "$ANTHROPIC_API_KEY" ] && [ -f ../../.env ] && { set -a; . ../../.env; set +a; }
 python score.py <path-to-pdf> --role software_engineering_intern
 ```
 

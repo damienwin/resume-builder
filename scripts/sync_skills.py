@@ -33,13 +33,15 @@ PATH_SUBSTITUTIONS = (((".claude/skills/", ".agents/skills/")),)
 # generated here too so a hand edit cannot reintroduce a dead path.
 SOURCE_COMMANDS = {
     "source-command-start": {
-        "description": "Guided entry point — scan Simplify's job boards, then optionally tailor and/or apply to what looks worth pursuing",
+        "description": "Guided entry point — connect your sources, fill knowledge/, set your settings and autofill, then scan and tailor + apply",
         "target": "start",
         "body": (
-            "Run the **start** skill (`.agents/skills/start/SKILL.md`). It runs the\n"
-            "`job-scan` skill's interactive checklist first, then offers to tailor and/or\n"
-            "apply to whatever the user selects from the results. Follow that skill's\n"
-            "steps exactly — never skip its confirmation prompts."
+            "Run the **start** skill (`.agents/skills/start/SKILL.md`). On a fresh clone\n"
+            "it connects sources, fills `knowledge/` and asks for anything missing, sets\n"
+            "up settings and the autofiller, then runs the `job-scan` skill and tailors +\n"
+            "applies to whatever the user picks. If the user asked for settings, run only\n"
+            "its Steps 1.6 and 1.7. Follow that skill's steps exactly — never skip its\n"
+            "confirmation prompts."
         ),
     },
     "source-command-app-profile-sync": {
