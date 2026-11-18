@@ -59,6 +59,7 @@ note).
 from __future__ import annotations
 
 import argparse
+import hashlib
 import http.client
 import json
 import os
@@ -691,16 +692,82 @@ def compare_eligibility(
 # ---------------------------------------------------------------------------
 
 
-def _check_one(jd_path: str, jev_enabled: bool, education: Path, experience_dir: Path, force_jev: bool) -> Dict[str, Any]:
+def _source_version() -> str:
+    """First 12 hex of sha256 of this script's own source, so any logic edit
+    invalidates cached entries automatically."""
+    try:
+        return hashlib.sha256(Path(__file__).read_bytes()).hexdigest()[:12]
+    except OSError:
+        return "0" * 12
+
+
+PARSER_VERSION = _source_version()
+
+# Transient Jev failures: a retry may succeed, so never cache them.
+_UNCACHEABLE_PATHS = ("error", "jev_error", "jev_no_key", "jev_malformed")
+
+
+def _flags(jev_enabled: bool, force_jev: bool) -> str:
+    return f"jev={int(bool(jev_enabled))}:force={int(bool(force_jev and jev_enabled))}"
+
+
+def cache_version(jev_enabled: bool, force_jev: bool) -> str:
+    # Only JD-derived extraction is cached; nothing from knowledge/ is involved.
+    return f"{PARSER_VERSION}:{_flags(jev_enabled, force_jev)}"
+
+
+_EXTRACTION_FIELDS = ("degree", "degree_requirement", "years_required", "years_requirement",
+                      "extraction_ok", "source_span")
+
+
+def _extraction_to_cache(ex: ExtractionResult) -> Dict[str, Any]:
+    return {"path": ex.path, "can_drop": ex.can_drop, "needs_judgment": ex.needs_judgment,
+            "extraction": ex.to_dict()}
+
+
+def _extraction_from_cache(rec: Dict[str, Any]) -> ExtractionResult:
+    d = rec["extraction"]
+    return ExtractionResult(**{k: d[k] for k in _EXTRACTION_FIELDS},
+                            can_drop=bool(rec["can_drop"]),
+                            needs_judgment=bool(rec["needs_judgment"]),
+                            path=str(rec["path"]))
+
+
+def _check_one(jd_path: str, jev_enabled: bool, education: Path, experience_dir: Path, force_jev: bool,
+               cache: bool = False) -> Dict[str, Any]:
     try:
         jd_text = Path(jd_path).read_text(encoding="utf-8", errors="replace")
-        if force_jev and jev_enabled:
-            extraction = call_jev(jd_text)
-        else:
-            extraction = extract(jd_text, jev_enabled=jev_enabled)
+        key = version = None
+        extraction = None
+        if cache and jd_text.strip():
+            try:
+                import scan_cache
+                jd_hash = scan_cache.content_hash(jd_text)
+                version = cache_version(jev_enabled, force_jev)
+                # Per-Jev-state slot, so a no-Jev entry and a Jev entry coexist
+                # instead of overwriting each other (version still guards it).
+                key = hashlib.sha256(f"{jd_hash}:{_flags(jev_enabled, force_jev)}".encode()).hexdigest()
+                hit = scan_cache.parsed_get("eligibility", key, jd_hash, version)
+                if hit is not None:
+                    extraction = _extraction_from_cache(hit)
+            except Exception:  # noqa: BLE001 - cache is best-effort (incl. corrupt records)
+                extraction = None
+        hit_cache = extraction is not None
+        if extraction is None:
+            if force_jev and jev_enabled:
+                extraction = call_jev(jd_text)
+            else:
+                extraction = extract(jd_text, jev_enabled=jev_enabled)
+        # Status/reason depend on private knowledge/: always computed live, never stored.
         status, reason = compare_eligibility(extraction, education, experience_dir)
-        return {"jd_path": jd_path, "path": extraction.path, "extraction": extraction.to_dict(),
-                "status": status, "reason": reason}
+        out = {"jd_path": jd_path, "path": extraction.path, "extraction": extraction.to_dict(),
+               "status": status, "reason": reason}
+        if key and not hit_cache and extraction.path not in _UNCACHEABLE_PATHS:
+            try:
+                scan_cache.parsed_put("eligibility", key, jd_hash, version, _extraction_to_cache(extraction))
+            except Exception:  # noqa: BLE001
+                pass
+        return out
     except Exception as exc:  # fail open per posting
         return {"jd_path": jd_path, "path": "error", "extraction": ExtractionResult().to_dict(),
                 "status": "unverified", "reason": f"eligibility check error ({type(exc).__name__}); keeping posting"}
@@ -714,6 +781,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--no-jev", action="store_true", help="Disable Jev (same as RESUME_BUILDER_JEV=off)")
     parser.add_argument("--force-jev", action="store_true", help="Skip the regex pre-filter (only if Jev is enabled)")
     parser.add_argument("--json", action="store_true", help="Print machine-readable JSON")
+    parser.add_argument("--cache", action="store_true",
+                        help="Reuse/store verdicts in the shared scan cache (keyed by JD hash, "
+                             "knowledge inputs, and Jev state)")
     args = parser.parse_args(argv)
 
     try:
@@ -722,7 +792,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(f"check_eligibility: Jev disabled ({gate_reason}); postings the regex can't classify "
                   f"are marked needs_judgment.", file=sys.stderr)
         results = [
-            _check_one(p, jev_enabled, Path(args.education), Path(args.experience_dir), args.force_jev)
+            _check_one(p, jev_enabled, Path(args.education), Path(args.experience_dir), args.force_jev,
+                       cache=args.cache)
             for p in args.jd_paths
         ]
     except Exception as exc:

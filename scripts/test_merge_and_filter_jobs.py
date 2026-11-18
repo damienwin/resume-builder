@@ -15,6 +15,8 @@ from merge_and_filter_jobs import (
     canonical_url,
     dedupe_cross_source,
     filter_already_applied,
+    filter_excluded_companies,
+    load_excluded_companies,
     roles_match,
 )
 
@@ -171,6 +173,28 @@ class DedupeTests(unittest.TestCase):
         kept, dropped = dedupe_cross_source(entries)
         self.assertEqual(dropped, 0)
         self.assertEqual(len(kept), 2)
+
+
+class ExcludedCompaniesTests(unittest.TestCase):
+    def test_exact_and_whole_word_prefix_match_dropped(self):
+        entries = [entry("Palantir", "SWE"), entry("IBM Research", "SWE"),
+                   entry("IBMX", "SWE"), entry("Acme", "SWE")]
+        kept, dropped = filter_excluded_companies(entries, ["palantir", "ibm"])
+        self.assertEqual(dropped, 2)
+        self.assertEqual([e["company"] for e in kept], ["IBMX", "Acme"])
+
+    def test_empty_list_is_a_noop(self):
+        entries = [entry("Acme", "SWE")]
+        self.assertEqual(filter_excluded_companies(entries, []), (entries, 0))
+
+    def test_load_skips_comments_blanks_and_missing_file(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
+            f.write("# header\nPalantir  # why\n\nRTX\n")
+        try:
+            self.assertEqual(load_excluded_companies(f.name), ["palantir", "rtx"])
+        finally:
+            os.unlink(f.name)
+        self.assertEqual(load_excluded_companies("/nonexistent/x.txt"), [])
 
 
 class AlreadyAppliedTests(unittest.TestCase):

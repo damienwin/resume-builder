@@ -609,5 +609,138 @@ class LocalParsingTests(unittest.TestCase):
             self.assertIsNone(sum_years_experience(Path(td) / "nope"))
 
 
+class CacheTests(unittest.TestCase):
+    JD = "Requirements: Bachelor's degree in Computer Science required."
+
+    def setUp(self):
+        self.td = tempfile.TemporaryDirectory()
+        self.addCleanup(self.td.cleanup)
+        self.tmp = Path(self.td.name)
+        p = mock.patch.dict(os.environ, {"RESUME_BUILDER_CACHE": str(self.tmp / "cache")})
+        p.start()
+        self.addCleanup(p.stop)
+        self.edu = make_education(self.tmp)
+        self.exp = make_experience_dir(self.tmp)
+        self.jd = self.tmp / "jd.txt"
+        self.jd.write_text(self.JD)
+
+    def run_one(self, jev=False, cache=True, jd=None):
+        return ce._check_one(str(jd or self.jd), jev, self.edu, self.exp, False, cache=cache)
+
+    def counting(self):
+        return mock.patch.object(ce, "extract", wraps=ce.extract)
+
+    def test_hit_and_restamp(self):
+        first = self.run_one()
+        other = self.tmp / "other.txt"
+        other.write_text(self.JD)
+        with self.counting() as m:
+            second = self.run_one(jd=other)
+        self.assertEqual(m.call_count, 0)
+        self.assertEqual(second["jd_path"], str(other))
+        self.assertEqual(second["status"], first["status"])
+
+    def test_miss_on_content_change(self):
+        self.run_one()
+        self.jd.write_text(self.JD + " Master's degree required.")
+        with self.counting() as m:
+            self.run_one()
+        self.assertEqual(m.call_count, 1)
+
+    def test_miss_on_version_bump(self):
+        self.run_one()
+        with mock.patch.object(ce, "PARSER_VERSION", "999"), self.counting() as m:
+            self.run_one()
+        self.assertEqual(m.call_count, 1)
+
+    def test_hit_after_education_change_uses_new_education(self):
+        jd = self.tmp / "ms.txt"
+        jd.write_text("Requirements: Master's degree in Computer Science required.")
+        before = self.run_one(jd=jd)
+        make_education(self.tmp, degree_line="degree: Ph.D. in Computer Science")
+        with self.counting() as m:
+            after = self.run_one(jd=jd)
+        self.assertEqual(m.call_count, 0)  # extraction served from cache
+        fresh = self.run_one(jd=jd, cache=False)
+        self.assertEqual((after["status"], after["reason"]), (fresh["status"], fresh["reason"]))
+        self.assertNotEqual(before["status"], after["status"])
+
+    def test_hit_after_experience_change_regenerates_verdict(self):
+        jd = self.tmp / "yrs.txt"
+        jd.write_text("Requirements: 5+ years of professional experience required.")
+        self.run_one(jd=jd)
+        write(self.exp / "job.md", "---\nstart: Jan 2010\nend: Jan 2020\n---\n")
+        after = self.run_one(jd=jd)
+        fresh = self.run_one(jd=jd, cache=False)
+        self.assertEqual((after["status"], after["reason"]), (fresh["status"], fresh["reason"]))
+
+    def test_no_private_text_in_cache_dir(self):
+        write(self.exp / "job.md", f"---\ncompany: {SENTINEL_EMPLOYER}\nstart: Jan 2010\nend: Jan 2020\n---\n")
+        r = self.run_one()
+        self.assertTrue(r["reason"])
+        files = [f for f in (self.tmp / "cache").rglob("*") if f.is_file()]
+        self.assertTrue(files)
+        blob = "\n".join(f.read_text(errors="replace") for f in files)
+        for needle in (SENTINEL_SCHOOL, SENTINEL_EMPLOYER, "Computer Engineering", "B.S.", r["reason"]):
+            self.assertNotIn(needle, blob)
+        self.assertNotIn('"status"', blob)
+        self.assertNotIn('"reason"', blob)
+
+    def test_parser_version_is_source_hash(self):
+        import re
+        self.assertRegex(ce.PARSER_VERSION, r"^[0-9a-f]{12}$")
+        self.assertEqual(ce.PARSER_VERSION, ce._source_version())
+
+    def test_parsed_get_misses_on_different_version(self):
+        import scan_cache
+        self.run_one()
+        jd_hash = scan_cache.content_hash(self.JD)
+        import hashlib
+        key = hashlib.sha256(f"{jd_hash}:{ce._flags(False, False)}".encode()).hexdigest()
+        self.assertIsNotNone(scan_cache.parsed_get("eligibility", key, jd_hash, ce.cache_version(False, False)))
+        self.assertIsNone(scan_cache.parsed_get("eligibility", key, jd_hash, "deadbeef0000:jev=0:force=0"))
+
+    def test_corrupt_record_yields_fresh_result(self):
+        fresh = self.run_one(cache=False)
+        self.run_one()
+        recs = list((self.tmp / "cache" / "parsed" / "eligibility").glob("*.json"))
+        self.assertEqual(len(recs), 1)
+        for garbage in ("{not json", "[]", '{"jd_hash": 1}', "\x00\xff"):
+            recs[0].write_text(garbage)
+            r = self.run_one()
+            self.assertEqual({k: v for k, v in r.items()}, fresh)
+
+    def test_jev_enabled_not_served_no_jev_entry(self):
+        self.run_one(jev=False)
+        with self.counting() as m:
+            self.run_one(jev=True)
+        self.assertEqual(m.call_count, 1)
+        with self.counting() as m:
+            self.run_one(jev=False)
+        self.assertEqual(m.call_count, 0)
+
+    def test_no_cache_by_default(self):
+        self.run_one(cache=False)
+        self.assertFalse((self.tmp / "cache").exists())
+        self.run_one(cache=True)
+        with self.counting() as m:
+            self.run_one(cache=False)
+        self.assertEqual(m.call_count, 1)
+
+    def test_error_results_not_cached(self):
+        with mock.patch.object(ce, "compare_eligibility", side_effect=RuntimeError("boom")):
+            r = self.run_one()
+        self.assertEqual(r["path"], "error")
+        self.assertFalse((self.tmp / "cache").exists())
+
+    def test_transient_jev_failure_not_cached(self):
+        bad = ExtractionResult(extraction_ok=False, path="jev_error")
+        with mock.patch.object(ce, "extract", return_value=bad):
+            self.run_one(jev=True)
+        self.assertFalse((self.tmp / "cache").exists())
+
+
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,5 +1,7 @@
 # resume-builder
 
+![How the pipeline fits together: scripts filter and verify, models only rank and write](docs/pipeline-flow.png)
+
 Find postings, generate a tailored one-page LaTeX resume for any job
 description, and (optionally) autofill the application — all from a rich
 personal knowledge base plus a set of Claude Code skills.

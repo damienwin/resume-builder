@@ -117,7 +117,7 @@ def parse_description(page_html: str) -> dict:
 
 
 def lookup(companies: list[str], concurrency: int = 8, timeout: float = 20.0,
-           fetcher=None, out_dir: Path | None = None) -> dict:
+           fetcher=None, out_dir: Path | None = None, use_cache: bool = False) -> dict:
     """Return {company: result}. 404s are retried with the next slug guess."""
     own_tmp = None
     if out_dir is None:
@@ -127,7 +127,18 @@ def lookup(companies: list[str], concurrency: int = 8, timeout: float = 20.0,
         cands = {c: slug_candidates(c) for c in companies}
         results: dict[str, dict] = {c: {"status": "none", "est_text": None, "country": None,
                                         "slug": None} for c in companies}
-        pending = {c: 0 for c in companies if cands[c]}
+        cached: set[str] = set()
+        if use_cache:
+            import scan_cache
+            for c in companies:
+                try:
+                    hit = scan_cache.levels_get(c)
+                except Exception:  # noqa: BLE001 - cache is best-effort
+                    hit = None
+                if hit and hit.get("status") == "estimated":
+                    results[c] = hit
+                    cached.add(c)
+        pending = {c: 0 for c in companies if cands[c] and c not in cached}
         rounds = 0
         while pending and rounds < MAX_ROUNDS:
             entries = []
@@ -146,6 +157,13 @@ def lookup(companies: list[str], concurrency: int = 8, timeout: float = 20.0,
                     nxt[c] = i + 1
             pending = nxt
             rounds += 1
+        if use_cache:
+            for c in companies:
+                if c not in cached and results[c].get("status") == "estimated" and results[c].get("est_text"):
+                    try:
+                        scan_cache.levels_put(c, results[c])
+                    except Exception:  # noqa: BLE001
+                        pass
         return results
     finally:
         if own_tmp:
@@ -158,12 +176,14 @@ def main(argv=None) -> int:
     ap.add_argument("--companies-file")
     ap.add_argument("--concurrency", type=int, default=8)
     ap.add_argument("--json", action="store_true", help="emit JSON (default)")
+    ap.add_argument("--cache", action="store_true",
+                    help="reuse/store successful estimates in the shared scan cache (30-day TTL)")
     args = ap.parse_args(argv)
     companies = list(args.companies)
     if args.companies_file:
         companies += [l.strip() for l in Path(args.companies_file).read_text().splitlines() if l.strip()]
     companies = list(dict.fromkeys(companies))
-    json.dump({"results": lookup(companies, args.concurrency)}, sys.stdout, indent=2)
+    json.dump({"results": lookup(companies, args.concurrency, use_cache=args.cache)}, sys.stdout, indent=2)
     sys.stdout.write("\n")
     return 0
 

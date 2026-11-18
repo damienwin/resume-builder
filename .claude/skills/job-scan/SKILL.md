@@ -214,7 +214,11 @@ python3 scripts/merge_and_filter_jobs.py --simplify <scratchpad>/s.json \
 already-applied filtering deterministically — don't re-derive either in
 prose. It emits `entries` plus `scanned`, `scanned_simplify`,
 `scanned_speedyapply`, `scanned_speedyapply_ai`, `closed_excluded`,
-`cross_source_dropped`, and `already_applied_dropped`. Read those numbers
+`cross_source_dropped`, `already_applied_dropped`, and
+`excluded_companies_dropped` (employers listed in the user's private
+`knowledge/excluded_companies.txt`, one per line, matched by name or whole-word
+prefix; the script reads it by default, so every scan and the prewarm honor
+it — add a line there to exclude a company for good). Read those numbers
 straight through to Steps 5–7.
 
 Each entry has `category`, `company`, `role`, `location`, `age_raw`,
@@ -284,8 +288,19 @@ same run:
 
 ```bash
 python3 scripts/fetch_urls.py --urls-file <scratchpad>/jd_urls.txt \
-  --out-dir <scratchpad>/jds --concurrency 8 --strip-tags > <scratchpad>/jd_fetch.json
+  --out-dir <scratchpad>/jds --concurrency 8 --strip-tags --cache > <scratchpad>/jd_fetch.json
 ```
+
+`--cache` reads/writes the shared on-disk cache (`scripts/scan_cache.py`,
+default `~/.cache/resume-builder/`, 24h max age for JDs): a fresh hit skips
+the network and the manifest marks it `"cached": true`, with top-level
+`cache_hits`/`cache_misses`. A cold cache just means normal speed. The
+scheduled `scripts/prewarm_scan.py` fills this cache ahead of time with
+these same steps; it is read-only with respect to the scan — it never
+writes `job_scan_state.json` or advances `last_scan_at`, and never tailors
+or applies. Only board files (Step 1) are always fetched live. `apply`'s
+handoff verification still fetches the posting live; don't route it through
+the cache.
 
 One line per `apply_url` in the union, no name column needed (the manifest
 maps each URL back to its saved `.txt`). Steps 2.5 and 3 both read from
@@ -314,7 +329,7 @@ hatted entries in a single call (one Jev-gate notice per run, not one per
 posting), against Step 2.5's cached JD text:
 
 ```bash
-python3 scripts/check_eligibility.py <scratchpad>/jds/<name1>.txt <scratchpad>/jds/<name2>.txt ... --json
+python3 scripts/check_eligibility.py <scratchpad>/jds/<name1>.txt <scratchpad>/jds/<name2>.txt ... --cache --json
 ```
 
 It prints `{"jev_enabled": bool, "results": [{"jd_path", "extraction",
@@ -400,7 +415,7 @@ Only if the user opted in.
   call:
 
   ```bash
-  python3 scripts/extract_comp.py <scratchpad>/jds/<name1>.txt <scratchpad>/jds/<name2>.txt ... --json
+  python3 scripts/extract_comp.py <scratchpad>/jds/<name1>.txt <scratchpad>/jds/<name2>.txt ... --cache --json
   ```
 
   It prints `{"results": [{"jd_path", "base": {"low","high","period","raw"}|null,
@@ -421,7 +436,7 @@ Only if the user opted in.
   to a file and run **one** call:
 
   ```bash
-  python3 scripts/levels_fyi_est.py --companies-file <scratchpad>/companies.txt --json
+  python3 scripts/levels_fyi_est.py --companies-file <scratchpad>/companies.txt --cache --json
   ```
 
   It fetches every company's levels.fyi page in one parallel batch, retries
@@ -437,6 +452,7 @@ Classify each posting:
 
 | Tier | When |
 |---|---|
+| **Prestigious** | Company is on the prestige list in `knowledge/rules.md` (when present) — wins over every other signal, never dropped |
 | **Better** | Stated or estimated comp beats the bar, a clearly higher level, or a company the user's notes call preferred/aspirational |
 | **Comparable** | No explicit beat but a real positive signal — `🔥 FAANG+`, an estimate near the bar, an obviously on-par tier |
 | **Worth a skim** | No clear signal either way; unfamiliar or unverifiable, nothing reading as a step down |
@@ -471,7 +487,7 @@ against). Everything else is identical.
   number understates the real offer. Never invent an equity value the JD
   doesn't state. Otherwise `—`.
 - **Posted** — the `age_raw` field (`1d`, `3d`).
-- **Tier** — Step 3's classification. Sort Better → Comparable → Worth a
+- **Tier** — Step 3's classification. Sort Prestigious → Better → Comparable → Worth a
   skim, newest first within each tier, then company name alphabetically so
   re-runs are stable.
 - **Note** — a short factual clause on **what the company actually does**
@@ -548,7 +564,7 @@ python3 scripts/log_metric.py job_scan '{
   "closed_excluded": <N>, "cross_source_dropped": <N or omit if 0>,
   "already_applied_dropped": <N>, "surfaced": <final count>,
   "compare_offer_used": <true|false>,
-  "better_count": <N or omit>, "comparable_count": <N or omit>,
+  "prestigious_count": <N or omit>, "better_count": <N or omit>, "comparable_count": <N or omit>,
   "worth_a_skim_count": <N or omit>, "dropped_worse_count": <N or omit>,
   "duration_s": <from run_timer finish>, "steps": <from run_timer finish>,
   "fetch_speedup": <N or omit>
