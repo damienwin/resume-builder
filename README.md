@@ -6,37 +6,147 @@ Find postings, generate a tailored one-page LaTeX resume for any job
 description, and (optionally) autofill the application — all from a rich
 personal knowledge base plus a set of Claude Code skills.
 
-## Setting it up for yourself
+## The flow at a glance
 
-Everything person-specific lives in `knowledge/`, which is gitignored — your
-real data never gets committed. The repo ships `knowledge.example/` with
-placeholder templates showing the expected format. To make this repo yours:
+```
+1. Set up      install tectonic + poppler, copy knowledge.example/
+2. Fill        /start interviews you, or edit knowledge/ by hand
+3. Scan        /scan             new postings since your last scan
+4. Read        one table: Company | Role | TC | Location | Posted | Tier | Note
+5. Act         pick rows -> tailor only, or tailor + autofill (never submits)
+```
 
-1. **Install prerequisites:**
-   ```bash
-   brew install tectonic poppler   # tectonic compiles the LaTeX; poppler's pdftotext runs the ATS check
-   ```
-2. **Copy the templates**: `cp -r knowledge.example knowledge`
-3. **Fill in `knowledge/profile.md`, `education.md`, and `skills.md`** with
-   your info, and add files under `knowledge/experience/`,
-   `knowledge/research/`, and `knowledge/projects/` with your own history
-   (use the template files as format examples: YAML frontmatter + rich
-   prose + seed bullets). The richer the prose, the better the tailoring —
-   but avoid pasting internal-only system names, proprietary architecture,
-   or non-public metrics from employers if you ever intend to make your
-   fork public.
-4. **Delete or rewrite `knowledge/rules.md`** — it holds per-person
-   selection preferences (which roles to always include, where to archive
-   finished PDFs). The skill works fine without it.
-5. Open the folder in Claude Code (or Codex — see below) and run **`/start`**
-   — the guided entry point. It scans Simplify's job boards, walks you
-   through an interactive checklist (board, categories, recency, whether to
-   compare against a current offer), then offers to tailor and/or apply to
-   whatever looks worth pursuing from the results.
+Steps 2, 3 and 5 run as slash commands in Claude Code. Scripts do the
+fetching, filtering and PDF checks; the model only ranks postings and writes
+bullets, and only from facts in `knowledge/`.
 
-The skill itself (`.claude/skills/tailor-resume/SKILL.md`) is fully
-person-agnostic — it fills the template header/education from your
-`knowledge/` files, so no template editing is needed.
+### 1. Set up
+
+```bash
+brew install tectonic poppler
+```
+
+```bash
+cp -r knowledge.example knowledge
+```
+
+`tectonic` compiles the LaTeX and poppler's `pdftotext` runs the ATS check.
+`knowledge/` is gitignored, so your real data never gets committed.
+
+### 2. Fill in `knowledge/`
+
+The richer this is, the better every resume gets. Pick whichever is easiest:
+
+- **Let `/start` do it.** On a fresh clone, `/start` notices placeholder
+  files and offers to fill them from:
+  - **your existing resume** (PDF, .docx, .tex, .md): it splits it into
+    profile, education, skills and one file per role or project, then asks
+    about the gaps a resume hides (dates, repo links, the numbers behind a
+    bullet);
+  - **your repos on this machine**: it reads git history and READMEs to
+    draft project files, and you pick which repos are worth a resume line;
+  - **past Claude Code / Codex sessions and your GitHub** (optional,
+    read-only): used only as leads for questions like "your sessions show a
+    caching rewrite in March, what did it speed up?". Nothing goes on the
+    resume until you confirm it.
+
+  It then checks each entry has a concrete metric or scale, asks for any that
+  are missing, and never invents one.
+- **Write it by hand.** Each template in `knowledge.example/` shows the
+  format (YAML frontmatter, free prose, seed bullets):
+
+  | File | Holds |
+  |---|---|
+  | `profile.md` | name, email, links, optional `website:` |
+  | `education.md` | school, dates, GPA, coursework. **The degree here drives the scan's degree check** |
+  | `skills.md` | your full skill list; it is filtered per JD |
+  | `experience/<company-year>.md` | one file per job or internship |
+  | `research/<slug>.md` | one file per lab or research role |
+  | `projects/<slug>.md` | one file per project; add `repo:` (AI screeners dock unlinked projects) |
+  | `rules.md` | optional: selection preferences, scan defaults, archive folder |
+  | `current_offer.md` | optional: an offer to compare postings against |
+  | `demographics.md` | optional: voluntary EEO answers for the autofiller |
+
+  Write more than fits on a page: metrics, scale, design tradeoffs. The
+  tailoring step compresses; the knowledge base remembers.
+
+### 3. Scan: `/scan`
+
+```
+/scan        # everything posted since your last scan
+/scan 3      # the last 3 days
+```
+
+`/scan` pulls the New Grad boards (Simplify plus two speedyapply boards) or
+the Internship board, merges and dedupes them, drops what you can't or
+needn't apply to, and prints one table. It takes board, categories and
+offer comparison from `knowledge/rules.md` instead of asking. `/job-scan` is the same scan with
+every option as a flag or an interactive checklist:
+
+```
+/job-scan new-grad --swe --dsa --days 7 --compare-offer
+```
+
+`/start` runs the same scan after checking setup, so it's the easiest first
+command; `/scan` is the quick daily one.
+
+### 4. Read the output
+
+```
+| Company | Role                   | TC                         | Location    | Posted | Tier       | Note                                   |
+|---------|------------------------|----------------------------|-------------|--------|------------|----------------------------------------|
+| Acme    | Software Engineer, New | $150k-$180k + bonus + RSUs | NYC, NY     | 1d     | Better     | payments network; cap: 2 applications  |
+| Globex  | ML Engineer I          | ~$140K-$190K (est.)        | Remote, US  | 2d     | Comparable | ad-tech; PhD preferred, BS accepted    |
+```
+
+- **TC**: a figure stated on the board or in the JD (bonus/equity appended
+  when the JD names them), or a levels.fyi range marked `(est.)`. `—` means
+  nothing was findable; a figure is never made up.
+- **Posted**: age on the board (`0d` is today).
+- **Tier** (only with `--compare-offer`): **Prestigious** (on your list in
+  `rules.md`) → **Better** (beats your offer on comp, level or a company you
+  prefer) → **Comparable** (FAANG+, near the bar) → **Worth a skim** (no
+  clear signal). Rows are sorted in that order, newest first. A posting is
+  dropped only when it's clearly worse on every signal, and the report
+  counts those drops.
+- **Note**: what the company does, plus flags: a degree-check result
+  (`PhD preferred, BS accepted`, `advanced-degree flag unverified`), an
+  application cap (`cap: 2 applications`), or "applied recently, role
+  unconfirmed" when you have a resume for that company but maybe not that
+  opening.
+
+Under the table, the report gives scanned vs. surfaced (per source), the
+recency window used, and counts of closed, duplicate, already-applied,
+excluded and degree-ineligible postings that were removed. Zero counts are
+left out. If a source failed to fetch it says so, rather than reporting "0
+new postings".
+
+### 5. Act on it
+
+After the table, the scan asks which postings to act on and whether to
+**tailor only** or **tailor + apply**. Each pick gets its own subagent, all
+started at once. Each one first checks hard blockers against the JD (graduation
+year / start date, required degree, visa / citizenship / clearance) and skips
+with a reason if you can't take the job, then tailors a one-page PDF, archives
+it, and (for apply) fills the form in its own browser tab, stopping at final
+review for you to submit. Say "just browsing" to skip this step.
+
+## Tuning what the scan shows
+
+| What | Where | Effect |
+|---|---|---|
+| Board, categories, recency, offer comparison | "Job scan defaults" in `knowledge/rules.md` | `/scan` uses these silently. `/job-scan` asks for anything missing, then offers to save your answers here |
+| Categories | `--swe --pm --dsa --quant` (default set), `--hw` (opt-in) | Simplify's own categories. `--startup` is accepted but filters nothing |
+| Recency | `/scan N`, `--days N`, `--since-last-scan` | Since-last-scan reads `knowledge/job_scan_state.json`, which every scan updates |
+| Companies you never want to see | `knowledge/excluded_companies.txt`, one per line | Matched by name or whole-word prefix; applies to every scan and the prewarm |
+| Already applied | automatic, from `knowledge/metrics.jsonl` and your archive folder | Drops postings you already tailored for. A company match within 3 days drops; from 3 to 30 days the role must also match, otherwise the row stays with a note |
+| Degree eligibility | the degree in `knowledge/education.md` | 🎓 postings have their JD read; dropped only if the required degree is above yours. Preferred-only or "or equivalent experience" stays |
+| Smarter degree parsing (optional) | `TYPESAFE_API_KEY` in `.env` (copy `.env.example`) | JDs the regex can't classify go to Jev (public JD text only). Without it, the model judges them. `RESUME_BUILDER_JEV=off` disables it |
+| Visa / citizenship / clearance | the job-apply plugin's local store (`~/.job-apply`), not `knowledge/` | Asked once per question at act time, then remembered only with your OK |
+| Years of experience | nothing to set | Never blocks a posting; noted as a stretch |
+| Offer comparison bar | `knowledge/current_offer.md`, or a "Comparison bar" figure in `rules.md` | The bar for Better / Comparable. A flat figure keeps your employer's name out of output |
+| Prestige list | a company list in `rules.md` | Those companies rank Prestigious and are never dropped |
+| Faster scans | `python3 scripts/install_prewarm_schedule.py install` (`--print` to dry-run) | macOS launchd job at 07:00 and 12:00 that prefetches JDs and comp pages into `~/.cache/resume-builder/` (override with `RESUME_BUILDER_CACHE`). Never advances scan state, tailors or applies. `uninstall` removes it |
 
 **Using Codex (or another agent) instead of Claude Code:** the repo ships an
 `AGENTS.md` that points any agent at the same pipeline. In Codex, just ask
@@ -45,39 +155,7 @@ slash command needed. (`/start`'s guided job-scan flow is Claude Code
 specific, since it relies on the `AskUserQuestion` tool; other agents can
 still drive `tailor-resume`/`apply` directly.)
 
-## Quickstart: `/start`
-
-```
-/start
-```
-
-This is the recommended way to use the repo day-to-day, once `knowledge/`
-is filled in. It's a thin wrapper around `/job-scan` (see below) that also
-checks `knowledge/` is set up first — the scan → triage → act flow now
-lives in `job-scan` itself, so `/job-scan` and `/start` behave the same way
-once setup is done:
-
-1. **Scan** — asks an interactive checklist for board (new grad /
-   internship), categories, recency window, and whether to compare
-   postings against a current offer.
-2. **Triage** — shows the compact results, confirms the list looks right,
-   then asks which postings (if any) to act on and whether to tailor only
-   or tailor + apply.
-3. **Act, in parallel** — every selected posting is handed to its own
-   subagent, all launched together rather than one at a time, so tailoring
-   N postings costs about the same wall-clock time as tailoring one. Each
-   subagent first checks the JD for hard eligibility blockers (work
-   authorization/visa/clearance requirements, graduation-year or
-   start-date cohort mismatches) against your `knowledge/` profile and
-   skips with a reported reason rather than wasting effort on a posting
-   you can't actually take; otherwise it tailors, archives the PDF, and
-   (for tailor + apply) fills the application in its own browser tab,
-   always stopping at final review — never auto-submitting.
-
-Just want to browse without triggering the act step? Say so when asked, or
-answer "just browsing" at the first triage prompt.
-
-## Usage
+## Tailoring a single posting
 
 From inside this directory in Claude Code:
 
@@ -195,7 +273,7 @@ to use Claude Haiku (needs `ANTHROPIC_API_KEY` in your shell environment or
 treat the output as directional signal (and a checklist of concrete,
 fixable deductions like missing project links), never a target score.
 
-## Scanning Simplify's job boards (optional)
+## Scan internals
 
 Run `/job-scan [new-grad|internship] [--dsa] [--pm] [--swe] [--quant] [--hw] [--startup] [--days N] [--compare-offer]`
 to pull recent postings and print a single lean markdown table. Anything you
@@ -237,10 +315,12 @@ don't pass as a flag is asked as an interactive checklist instead — bare
   alone never drops a posting outside a 3-day window — companies run several
   new-grad postings at once, so an unconfirmed match is surfaced with a note
   instead of being hidden.
-- Recency is a plain rolling window, `--days N`, defaulting to **7**. It's
-  always relative to today, not derived from any application-history file —
-  applications don't always happen in posting order, so a "since my last
-  application" cutoff would be unreliable.
+- Recency is either a rolling window, `--days N` (default **7**), or
+  `--since-last-scan`, which resumes from per-board markers in
+  `knowledge/job_scan_state.json`. When a marker has scrolled off the board,
+  the fallback window is the time since that board's last scan plus 2 days,
+  capped at 14 (`scripts/scan_fallback_days.py`). It's never derived from
+  application history, since applications don't happen in posting order.
 - Output is always a single table — `Company | Role | TC | Location | Posted
   | Tier | Note` under `--compare-offer` (Tier column dropped otherwise) —
   never grouped prose lists.
@@ -311,6 +391,7 @@ resume-builder/
 ├── .claude/
 │   ├── commands/start.md           # thin /start wrapper (Claude Code) — recommended entry point
 │   ├── commands/job-scan.md        # thin /job-scan wrapper (Claude Code)
+│   ├── commands/scan.md            # /scan [days]: job-scan with rules.md defaults
 │   ├── commands/tailor.md          # thin /tailor wrapper (Claude Code)
 │   ├── commands/ats-score.md       # thin /ats-score wrapper (Claude Code)
 │   ├── commands/app-profile-sync.md # thin /app-profile-sync wrapper (Claude Code)
@@ -355,6 +436,12 @@ resume-builder/
 │   ├── test_merge_and_filter_jobs.py
 │   ├── fetch_urls.py               # concurrent URL fetcher used by /job-scan and /ats-score
 │   ├── test_fetch_urls.py
+│   ├── scan_cache.py               # shared on-disk cache for JDs and comp lookups
+│   ├── prewarm_scan.py             # scheduled cache prewarm (read-only w.r.t. scan state)
+│   ├── install_prewarm_schedule.py # installs/removes the launchd prewarm job
+│   ├── check_eligibility.py        # degree-requirement check (regex, optional Jev)
+│   ├── extract_comp.py             # stated base/bonus/equity from JD text
+│   ├── levels_fyi_est.py           # levels.fyi comp estimates
 │   ├── log_metric.py               # appends run records to knowledge/metrics.jsonl
 │   ├── run_timer.py                # coarse step timing bridged across a skill's tool calls
 │   ├── test_run_timer.py
